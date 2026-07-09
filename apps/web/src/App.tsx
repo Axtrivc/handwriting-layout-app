@@ -72,6 +72,8 @@ export default function App() {
   const [cleanError, setCleanError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  // 清除成功后的闪烁反馈（显示绿色确认框的位置）
+  const [cleanFlash, setCleanFlash] = useState<SelectionRect[] | null>(null);
 
   // 手写切割器
   const [segmenterTarget, setSegmenterTarget] = useState<SegmenterTarget | null>(null);
@@ -543,6 +545,10 @@ export default function App() {
         updatedAt: nowISO(),
       }));
       setSelections([]);
+      // 闪烁反馈：显示被清除的区域位置 1.5 秒
+      const flashed = selections.map((s) => ({ ...s }));
+      setCleanFlash(flashed);
+      window.setTimeout(() => setCleanFlash(null), 1500);
       showToast(`已清除 ${resp.processed} 个区域`);
     } catch (err) {
       setCleanError(describeError(err));
@@ -981,6 +987,7 @@ export default function App() {
               exporting={exporting}
               exportSeed={exportSeedRef.current}
               glyphImages={glyphImages}
+              cleanFlash={cleanFlash}
             />
           ) : (
             <div className="canvas-empty" style={{ width: 900, height: 600 }} />

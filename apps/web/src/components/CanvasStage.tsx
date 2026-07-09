@@ -71,6 +71,8 @@ interface CanvasStageProps {
   exportSeed?: number;
   /** 预加载的 glyph 图片缓存（手写素材模式用） */
   glyphImages?: Map<string, HTMLImageElement>;
+  /** 清除成功后的闪烁确认框（1.5 秒后消失） */
+  cleanFlash?: SelectionRect[] | null;
 }
 
 /**
@@ -99,6 +101,7 @@ export function CanvasStage({
   exporting = false,
   exportSeed,
   glyphImages,
+  cleanFlash,
 }: CanvasStageProps) {
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -342,7 +345,7 @@ export function CanvasStage({
           );
         })}
 
-        {/* 已确认的框选区域（可视化，导出时隐藏） */}
+        {/* 已确认的框选区域（可视化，导出时隐藏）加粗高对比 */}
         {!exporting &&
           selections.map((s) => (
             <Rect
@@ -356,10 +359,10 @@ export function CanvasStage({
               y={s.y}
               width={s.width}
               height={s.height}
-              stroke="#2f6df6"
-              strokeWidth={1.5 / (stageRef.current?.scaleX() ?? 1)}
-              dash={[6, 4]}
-              fill="rgba(47,109,246,0.08)"
+              stroke="#ff4d4f"
+              strokeWidth={2.5 / (stageRef.current?.scaleX() ?? 1)}
+              dash={[8, 4]}
+              fill="rgba(255,77,79,0.12)"
               listening={selectMode}
               onTransformEnd={(e) => {
                 const node = e.target as Konva.Rect;
@@ -378,20 +381,36 @@ export function CanvasStage({
             />
           ))}
 
-        {/* 正在拖拽的临时框 */}
+        {/* 正在拖拽的临时框（加粗 + 高对比，确保可见） */}
         {draft && (
           <Rect
             x={draft.x}
             y={draft.y}
             width={draft.width}
             height={draft.height}
-            stroke="#1aa260"
-            strokeWidth={1.5}
-            dash={[4, 4]}
-            fill="rgba(26,162,96,0.1)"
+            stroke="#ff4d4f"
+            strokeWidth={2.5}
+            dash={[6, 3]}
+            fill="rgba(255,77,79,0.15)"
             listening={false}
           />
         )}
+
+        {/* 清除成功的闪烁确认框（绿色，1.5 秒消失） */}
+        {cleanFlash &&
+          cleanFlash.map((s) => (
+            <Rect
+              key={`flash-${s.id}`}
+              x={s.x}
+              y={s.y}
+              width={s.width}
+              height={s.height}
+              stroke="#1aa260"
+              strokeWidth={3}
+              fill="rgba(26,162,96,0.25)"
+              listening={false}
+            />
+          ))}
 
         {/* 文本选中框 */}
         <Transformer
