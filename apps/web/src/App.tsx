@@ -2,9 +2,12 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import type Konva from "konva";
 import {
   DEFAULT_TEXT_STYLE,
+  createBlankPage,
   createEmptyProject,
   deserializeProject,
+  nowISO,
   serializeProject,
+  type CanvasPage,
   type CanvasProject,
   type GlyphBoundingBox,
   type GlyphCandidate,
@@ -18,10 +21,12 @@ import { StylePanel } from "./components/StylePanel.js";
 import { ConnectionBadge } from "./components/ConnectionBadge.js";
 import { ProfileManager } from "./components/ProfileManager.js";
 import { GlyphSegmenter } from "./components/GlyphSegmenter.js";
+import { PagePanel } from "./components/PagePanel.js";
 import { useGlyphImages } from "./components/GlyphText.js";
 import { useConnection } from "./lib/useConnection.js";
 import { useHandwriting } from "./lib/useHandwriting.js";
 import { ApiError, cleanRegion, detectGlyphCandidates } from "./lib/apiClient.js";
+import { exportPagesToPDF, exportSinglePageToPDF } from "./lib/pdfExport.js";
 import {
   downloadText,
   downloadURL,
@@ -36,29 +41,27 @@ import {
   uid,
 } from "./lib/image.js";
 
-/** 手写切割器打开的目标（profileId + sampleSetId） */
+/** 手写切割器打开的目标。 */
 interface SegmenterTarget {
   profileId: string;
   sampleSetId: string;
 }
 
+/** 每页的背景图缓存：pageId -> HTMLImageElement。 */
+type ImageCache = Map<string, HTMLImageElement>;
+
 export default function App() {
-  const [project, setProject] = useState<CanvasProject>(() => ({
-    ...createEmptyProject(),
-    // 保留兼容：createEmptyProject 已含所有字段
-  }));
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
+  const [project, setProject] = useState<CanvasProject>(() => createEmptyProject());
+  const [imageCache, setImageCache] = useState<ImageCache>(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
 
-  // 框选清除区域状态
+  // 框选清除区域状态（作用于当前页）
   const [selectMode, setSelectMode] = useState(false);
   const [selections, setSelections] = useState<SelectionRect[]>([]);
   const [cleaning, setCleaning] = useState(false);
   const [cleanError, setCleanError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-
-  // 导出时隐藏 overlay
   const [exporting, setExporting] = useState(false);
 
   // 手写切割器
@@ -68,10 +71,19 @@ export default function App() {
   const [segError, setSegError] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
 
-  // 后端连接状态
   const { status, apiBase, updateApiBase, reconnect } = useConnection();
 
-  // ===== 手写档案管理 =====
+  // ===== 派生：当前页 =====
+  const activePage = useMemo<CanvasPage | null>(
+    () => project.pages.find((p) => p.id === project.activePageId) ?? null,
+    [project.pages, project.activePageId],
+  );
+  const activeImage = useMemo<HTMLImageElement | null>(
+    () => (activePage ? (imageCache.get(activePage.id) ?? null) : null),
+    [activePage, imageCache],
+  );
+
+  // ===== 手写档案管理（project 级） =====
   const hw = useHandwriting({
     profiles: project.handwritingProfiles,
     activeProfileId: project.activeHandwritingProfileId,
@@ -80,93 +92,253 @@ export default function App() {
     onActiveChange: (id) =>
       setProject((p) => ({ ...p, activeHandwritingProfileId: id })),
   });
-
-  // 预加载活动 profile 的 glyph 图片
   const glyphImages = useGlyphImages(
     project.handwritingProfiles,
     project.activeHandwritingProfileId,
   );
 
   const selected = useMemo(
-    () => project.textObjects.find((t) => t.id === selectedId) ?? null,
-    [project.textObjects, selectedId],
+    () => activePage?.textObjects.find((t) => t.id === selectedId) ?? null,
+    [activePage, selectedId],
   );
 
-  // ===== 轻提示 =====
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast((cur) => (cur === msg ? null : cur)), 2200);
   }, []);
 
-  // 同步背景图到 image 元素
-  const applyBackground = useCallback(async (dataURL: string) => {
-    const img = await loadImage(dataURL);
-    setImage(img);
-    setProject((p) => ({
-      ...p,
-      backgroundImage: dataURL,
-      width: img.naturalWidth,
-      height: img.naturalHeight,
-    }));
-  }, []);
+  // ===== 页面级状态更新辅助 =====
+  const updatePage = useCallback(
+    (pageId: string, updater: (page: CanvasPage) => CanvasPage) => {
+      setProject((p) => ({
+        ...p,
+        updatedAt: nowISO(),
+        pages: p.pages.map((pg) => (pg.id === pageId ? updater(pg) : pg)),
+      }));
+    },
+    [],
+  );
 
-  // ===== 上传图片 =====
+  const touchProject = useCallback(
+    (fn: (p: CanvasProject) => CanvasProject) => {
+      setProject((p) => ({ ...fn(p), updatedAt: nowISO() }));
+    },
+    [],
+  );
+
+  // ===== 背景图缓存 =====
+  const applyBackground = useCallback(
+    async (pageId: string, dataURL: string, width: number, height: number) => {
+      const img = await loadImage(dataURL);
+      setImageCache((cache) => {
+        const next = new Map(cache);
+        next.set(pageId, img);
+        return next;
+      });
+      updatePage(pageId, (pg) => ({
+        ...pg,
+        backgroundImage: dataURL,
+        originalWidth: width,
+        originalHeight: height,
+        updatedAt: nowISO(),
+      }));
+    },
+    [updatePage],
+  );
+
+  // ===== 上传图片到当前页 =====
   const handleUpload = useCallback(
     async (file: File) => {
+      if (!activePage) return;
       const dataURL = await fileToDataURL(file);
-      await applyBackground(dataURL);
+      const img = await loadImage(dataURL);
+      await applyBackground(activePage.id, dataURL, img.naturalWidth, img.naturalHeight);
       setSelections([]);
       setSelectedId(null);
       setCleanError(null);
-      setProject((p) => ({ ...p, cleanHistory: [] }));
     },
-    [applyBackground],
+    [activePage, applyBackground],
   );
 
-  // ===== 文本对象操作 =====
+  // ===== 多图导入：每张图建一页（按文件名排序） =====
+  const handleImportImages = useCallback(
+    async (files: File[]) => {
+      // 按文件名排序
+      const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, "zh"));
+      const newPages: CanvasPage[] = [];
+      for (const file of sorted) {
+        const dataURL = await fileToDataURL(file);
+        const img = await loadImage(dataURL);
+        const idx = project.pages.length + newPages.length;
+        const page = createBlankPage(idx, file.name.replace(/\.[^.]+$/, ""));
+        page.backgroundImage = dataURL;
+        page.originalWidth = img.naturalWidth;
+        page.originalHeight = img.naturalHeight;
+        newPages.push(page);
+        // 预载缓存
+        setImageCache((cache) => {
+          const next = new Map(cache);
+          next.set(page.id, img);
+          return next;
+        });
+      }
+      touchProject((p) => ({
+        ...p,
+        pages: [...p.pages, ...newPages],
+        activePageId: newPages[0]?.id ?? p.activePageId,
+      }));
+      showToast(`已导入 ${newPages.length} 页`);
+    },
+    [project.pages.length, touchProject, showToast],
+  );
+
+  // ===== 页面 CRUD =====
+  const handleAddPage = useCallback(() => {
+    touchProject((p) => {
+      const idx = p.pages.length;
+      const page = createBlankPage(idx);
+      return { ...p, pages: [...p.pages, page], activePageId: page.id };
+    });
+    setSelectedId(null);
+    setSelections([]);
+  }, [touchProject]);
+
+  const handleDeletePage = useCallback(
+    (id: string) => {
+      touchProject((p) => {
+        if (p.pages.length <= 1) return p;
+        const idx = p.pages.findIndex((pg) => pg.id === id);
+        const pages = p.pages.filter((pg) => pg.id !== id).map((pg, i) => ({ ...pg, index: i }));
+        const activePageId =
+          p.activePageId === id
+            ? (pages[Math.min(idx, pages.length - 1)]?.id ?? null)
+            : p.activePageId;
+        return { ...p, pages, activePageId };
+      });
+      setImageCache((cache) => {
+        const next = new Map(cache);
+        next.delete(id);
+        return next;
+      });
+      setSelectedId(null);
+      setSelections([]);
+    },
+    [touchProject],
+  );
+
+  const handleDuplicatePage = useCallback(
+    (id: string) => {
+      touchProject((p) => {
+        const src = p.pages.find((pg) => pg.id === id);
+        if (!src) return p;
+        const idx = p.pages.findIndex((pg) => pg.id === id) + 1;
+        const copy: CanvasPage = {
+          ...src,
+          id: uid("page"),
+          name: `${src.name} 副本`,
+          textObjects: src.textObjects.map((t) => ({ ...t, id: uid("obj"), naturalnessSeed: randomSeed() })),
+          cleanHistory: [],
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        };
+        const pages = [...p.pages];
+        pages.splice(idx, 0, copy);
+        const reindexed = pages.map((pg, i) => ({ ...pg, index: i }));
+        return { ...p, pages: reindexed, activePageId: copy.id };
+      });
+      setSelectedId(null);
+      setSelections([]);
+    },
+    [touchProject],
+  );
+
+  const handleRenamePage = useCallback(
+    (id: string, name: string) => {
+      updatePage(id, (pg) => ({ ...pg, name, updatedAt: nowISO() }));
+    },
+    [updatePage],
+  );
+
+  const handleMovePage = useCallback(
+    (id: string, direction: -1 | 1) => {
+      touchProject((p) => {
+        const idx = p.pages.findIndex((pg) => pg.id === id);
+        if (idx < 0) return p;
+        const newIdx = idx + direction;
+        if (newIdx < 0 || newIdx >= p.pages.length) return p;
+        const pages = [...p.pages];
+        const [moved] = pages.splice(idx, 1);
+        pages.splice(newIdx, 0, moved);
+        const reindexed = pages.map((pg, i) => ({ ...pg, index: i }));
+        return { ...p, pages: reindexed };
+      });
+    },
+    [touchProject],
+  );
+
+  const handleSetActivePage = useCallback((id: string) => {
+    setProject((p) => ({ ...p, activePageId: id }));
+    setSelectedId(null);
+    setSelections([]);
+    setCleanError(null);
+  }, []);
+
+  // ===== 文本对象操作（作用于当前页） =====
   const nextZ = useCallback(
-    () => project.textObjects.reduce((m, t) => Math.max(m, t.zIndex), -1) + 1,
-    [project.textObjects],
+    () => (activePage?.textObjects ?? []).reduce((m, t) => Math.max(m, t.zIndex), -1) + 1,
+    [activePage],
   );
 
   const handleAddText = useCallback(() => {
-    if (selectMode) return;
+    if (!activePage || selectMode) return;
     const newObj: TextObject = {
       id: uid(),
       text: "双击编辑文本",
-      x: project.width / 2,
-      y: project.height / 2,
+      x: activePage.originalWidth / 2,
+      y: activePage.originalHeight / 2,
       style: { ...DEFAULT_TEXT_STYLE },
       zIndex: nextZ(),
       naturalnessSeed: randomSeed(),
       renderMode: "font",
       handwritingProfileId: null,
     };
-    setProject((p) => ({ ...p, textObjects: [...p.textObjects, newObj] }));
-    setSelectedId(newObj.id);
-  }, [project.width, project.height, selectMode, nextZ]);
-
-  const handleChange = useCallback((obj: TextObject) => {
-    setProject((p) => ({
-      ...p,
-      textObjects: p.textObjects.map((t) => (t.id === obj.id ? obj : t)),
+    updatePage(activePage.id, (pg) => ({
+      ...pg,
+      textObjects: [...pg.textObjects, newObj],
+      updatedAt: nowISO(),
     }));
-  }, []);
+    setSelectedId(newObj.id);
+  }, [activePage, selectMode, nextZ, updatePage]);
+
+  const handleChange = useCallback(
+    (obj: TextObject) => {
+      if (!activePage) return;
+      updatePage(activePage.id, (pg) => ({
+        ...pg,
+        textObjects: pg.textObjects.map((t) => (t.id === obj.id ? obj : t)),
+        updatedAt: nowISO(),
+      }));
+    },
+    [activePage, updatePage],
+  );
 
   const handleDelete = useCallback(
     (id: string) => {
-      setProject((p) => ({
-        ...p,
-        textObjects: p.textObjects.filter((t) => t.id !== id),
+      if (!activePage) return;
+      updatePage(activePage.id, (pg) => ({
+        ...pg,
+        textObjects: pg.textObjects.filter((t) => t.id !== id),
+        updatedAt: nowISO(),
       }));
       if (selectedId === id) setSelectedId(null);
     },
-    [selectedId],
+    [activePage, selectedId, updatePage],
   );
 
   const handleDuplicate = useCallback(
     (id: string) => {
-      const src = project.textObjects.find((t) => t.id === id);
+      if (!activePage) return;
+      const src = activePage.textObjects.find((t) => t.id === id);
       if (!src) return;
       const copy: TextObject = {
         ...src,
@@ -177,51 +349,60 @@ export default function App() {
         zIndex: nextZ(),
         naturalnessSeed: randomSeed(),
       };
-      setProject((p) => ({ ...p, textObjects: [...p.textObjects, copy] }));
+      updatePage(activePage.id, (pg) => ({
+        ...pg,
+        textObjects: [...pg.textObjects, copy],
+        updatedAt: nowISO(),
+      }));
       setSelectedId(copy.id);
     },
-    [project.textObjects, nextZ],
+    [activePage, nextZ, updatePage],
   );
 
   const handleBringToFront = useCallback(
     (id: string) => {
+      if (!activePage) return;
       const top = nextZ();
-      const obj = project.textObjects.find((t) => t.id === id);
+      const obj = activePage.textObjects.find((t) => t.id === id);
       if (!obj) return;
       handleChange({ ...obj, zIndex: top + 1 });
     },
-    [project.textObjects, nextZ, handleChange],
+    [activePage, nextZ, handleChange],
   );
 
   const handleSendToBack = useCallback(
     (id: string) => {
-      const minZ = project.textObjects.reduce(
-        (m, t) => Math.min(m, t.zIndex),
-        0,
-      );
-      const obj = project.textObjects.find((t) => t.id === id);
+      if (!activePage) return;
+      const minZ = activePage.textObjects.reduce((m, t) => Math.min(m, t.zIndex), 0);
+      const obj = activePage.textObjects.find((t) => t.id === id);
       if (!obj) return;
       handleChange({ ...obj, zIndex: minZ - 1 });
     },
-    [project.textObjects, handleChange],
+    [activePage, handleChange],
   );
 
-  // ===== 自然化 =====
+  // ===== 自然化（项目级设置） =====
   const handleToggleNaturalness = useCallback((enabled: boolean) => {
-    setProject((p) => ({ ...p, naturalnessEnabled: enabled }));
-  }, []);
+    touchProject((p) => ({
+      ...p,
+      settings: { ...p.settings, naturalnessEnabled: enabled },
+    }));
+  }, [touchProject]);
 
   const handleChangeNaturalness = useCallback(
     (patch: Partial<NaturalnessParams>) => {
-      setProject((p) => ({
+      touchProject((p) => ({
         ...p,
-        naturalness: { ...p.naturalness, ...patch },
+        settings: {
+          ...p.settings,
+          naturalness: { ...p.settings.naturalness, ...patch },
+        },
       }));
     },
-    [],
+    [touchProject],
   );
 
-  // ===== 框选清除 =====
+  // ===== 框选清除（作用于当前页） =====
   const handleToggleSelectMode = useCallback((enabled: boolean) => {
     setSelectMode(enabled);
     if (enabled) setSelectedId(null);
@@ -233,9 +414,7 @@ export default function App() {
 
   const handleSelectionUpdate = useCallback(
     (id: string, rect: Omit<SelectionRect, "id">) => {
-      setSelections((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, ...rect } : s)),
-      );
+      setSelections((prev) => prev.map((s) => (s.id === id ? { ...s, ...rect } : s)));
     },
     [],
   );
@@ -246,24 +425,26 @@ export default function App() {
   }, []);
 
   const handleUndoClean = useCallback(() => {
-    setProject((p) => {
-      const last = p.cleanHistory[p.cleanHistory.length - 1];
-      if (!last) return p;
-      void applyBackground(last.beforeImage);
-      return { ...p, cleanHistory: p.cleanHistory.slice(0, -1) };
-    });
+    if (!activePage) return;
+    const last = activePage.cleanHistory[activePage.cleanHistory.length - 1];
+    if (!last) return;
+    void applyBackground(activePage.id, last.beforeImage, activePage.originalWidth, activePage.originalHeight);
+    updatePage(activePage.id, (pg) => ({
+      ...pg,
+      cleanHistory: pg.cleanHistory.slice(0, -1),
+      updatedAt: nowISO(),
+    }));
     setSelections([]);
     setCleanError(null);
     showToast("已撤销最近一次清除");
-  }, [applyBackground, showToast]);
+  }, [activePage, applyBackground, updatePage, showToast]);
 
   const handleClearRegion = useCallback(async () => {
-    const bg = project.backgroundImage;
-    if (!bg || selections.length === 0) return;
+    if (!activePage || !activePage.backgroundImage || selections.length === 0) return;
     setCleaning(true);
     setCleanError(null);
     try {
-      const { data, mime } = splitDataURL(bg);
+      const { data, mime } = splitDataURL(activePage.backgroundImage);
       const resp = await cleanRegion({
         image: data,
         mime,
@@ -275,23 +456,15 @@ export default function App() {
         })),
       });
       const newDataURL = joinDataURL(resp.mime, resp.image);
-      const beforeImage = bg;
-      await applyBackground(newDataURL);
-      setProject((p) => ({
-        ...p,
+      const beforeImage = activePage.backgroundImage;
+      await applyBackground(activePage.id, newDataURL, activePage.originalWidth, activePage.originalHeight);
+      updatePage(activePage.id, (pg) => ({
+        ...pg,
         cleanHistory: [
-          ...p.cleanHistory,
-          {
-            beforeImage,
-            afterImage: newDataURL,
-            regions: selections.map((s) => ({
-              x: s.x,
-              y: s.y,
-              width: s.width,
-              height: s.height,
-            })),
-          },
+          ...pg.cleanHistory,
+          { beforeImage, afterImage: newDataURL, regions: selections.map((s) => ({ x: s.x, y: s.y, width: s.width, height: s.height })) },
         ],
+        updatedAt: nowISO(),
       }));
       setSelections([]);
       showToast(`已清除 ${resp.processed} 个区域`);
@@ -300,42 +473,94 @@ export default function App() {
     } finally {
       setCleaning(false);
     }
-  }, [project.backgroundImage, selections, applyBackground, showToast]);
+  }, [activePage, selections, applyBackground, updatePage, showToast]);
 
-  const canUndoClean = project.cleanHistory.length > 0;
+  const canUndoClean = (activePage?.cleanHistory.length ?? 0) > 0;
 
-  // ===== 导出 PNG =====
+  // ===== 导出 =====
   const exportSeedRef = useRef<number>(randomSeed());
-  const handleExportPNG = useCallback(() => {
+
+  // 渲染某一页到 dataURL（临时挂载 Stage 并导出）
+  const renderPageToDataURL = useCallback(
+    async (page: CanvasPage): Promise<string> => {
+      // 当前活动页用已挂载的 stage 直接导出；其他页需要临时构建
+      if (page.id === project.activePageId && stageRef.current) {
+        const stage = stageRef.current;
+        return stage.toDataURL({
+          pixelRatio: 1 / stage.scaleX(),
+          x: 0,
+          y: 0,
+          width: page.originalWidth,
+          height: page.originalHeight,
+        });
+      }
+      // 非活动页：用离屏 canvas 绘制背景 + 文本（简化版，不应用 naturalness 以保证稳定）
+      return renderPageOffscreen(page, glyphImages);
+    },
+    [project.activePageId, glyphImages],
+  );
+
+  // 导出当前页 PNG
+  const handleExportPNG = useCallback(async () => {
+    if (!activePage || !stageRef.current) return;
     const stage = stageRef.current;
-    if (!stage) return;
     const prevSelected = selectedId;
     const prevSelectMode = selectMode;
     setSelectedId(null);
     setSelectMode(false);
     setExporting(true);
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        try {
-          const dataURL = stage.toDataURL({
-            pixelRatio: 1 / stage.scaleX(),
-            x: 0,
-            y: 0,
-            width: project.width,
-            height: project.height,
-          });
-          downloadURL(dataURL, exportFilename("png"));
-          showToast("已导出 PNG");
-        } catch (err) {
-          setCleanError(`导出失败：${err instanceof Error ? err.message : String(err)}`);
-        } finally {
-          setSelectedId(prevSelected);
-          setSelectMode(prevSelectMode);
-          setExporting(false);
-        }
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
+    try {
+      const dataURL = stage.toDataURL({
+        pixelRatio: 1 / stage.scaleX(),
+        x: 0,
+        y: 0,
+        width: activePage.originalWidth,
+        height: activePage.originalHeight,
       });
-    });
-  }, [project.width, project.height, selectedId, selectMode, showToast]);
+      const idx = project.pages.findIndex((p) => p.id === activePage.id);
+      downloadURL(dataURL, exportFilename("png", new Date(), idx + 1));
+      showToast("已导出当前页 PNG");
+    } catch (err) {
+      setCleanError(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSelectedId(prevSelected);
+      setSelectMode(prevSelectMode);
+      setExporting(false);
+    }
+  }, [activePage, selectedId, selectMode, project.pages, showToast]);
+
+  // 导出当前页 PDF
+  const handleExportSinglePDF = useCallback(async () => {
+    if (!activePage) return;
+    showToast("正在生成 PDF…");
+    try {
+      const dataURL = await renderPageToDataURL(activePage);
+      exportSinglePageToPDF(dataURL, activePage.originalWidth, activePage.originalHeight);
+      showToast("已导出当前页 PDF");
+    } catch (err) {
+      setCleanError(`PDF 导出失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [activePage, renderPageToDataURL, showToast]);
+
+  // 导出全部页 PDF
+  const handleExportAllPDF = useCallback(async () => {
+    if (project.pages.length === 0) return;
+    showToast(`正在生成 ${project.pages.length} 页 PDF…`);
+    try {
+      const dataURLs: string[] = [];
+      const sizes: { width: number; height: number }[] = [];
+      for (const page of project.pages) {
+        const url = await renderPageToDataURL(page);
+        dataURLs.push(url);
+        sizes.push({ width: page.originalWidth, height: page.originalHeight });
+      }
+      exportPagesToPDF(dataURLs, sizes);
+      showToast(`已导出 ${project.pages.length} 页 PDF`);
+    } catch (err) {
+      setCleanError(`PDF 导出失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [project.pages, renderPageToDataURL, showToast]);
 
   // ===== 项目保存 / 加载 =====
   const handleSaveProject = useCallback(() => {
@@ -356,22 +581,28 @@ export default function App() {
       }
       const loaded = result.project;
       setProject(loaded);
-      if (loaded.backgroundImage) {
-        await applyBackground(loaded.backgroundImage);
-      } else {
-        setImage(null);
+      // 重建背景图缓存
+      const cache: ImageCache = new Map();
+      for (const page of loaded.pages) {
+        if (page.backgroundImage) {
+          try {
+            cache.set(page.id, await loadImage(page.backgroundImage));
+          } catch {
+            /* 忽略单页加载失败 */
+          }
+        }
       }
+      setImageCache(cache);
       setSelections([]);
       setSelectedId(null);
       setCleanError(null);
       exportSeedRef.current = randomSeed();
-      showToast("已加载项目，可继续编辑");
+      const migrated = loaded.pages.length === 1 && !result.project.appVersion.startsWith("0.5");
+      showToast(migrated ? "已加载项目（旧版已迁移为多页）" : "已加载项目");
     } catch (err) {
-      setCleanError(
-        `加载失败：${err instanceof Error ? err.message : String(err)}`,
-      );
+      setCleanError(`加载失败：${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [applyBackground, showToast]);
+  }, [showToast]);
 
   // ===== 手写样本导入 =====
   const handleImportSample = useCallback(
@@ -379,32 +610,22 @@ export default function App() {
       try {
         const dataURL = await fileToDataURL(file);
         const img = await loadImage(dataURL);
-        hw.importSample(
-          profileId,
-          file.name,
-          dataURL,
-          img.naturalWidth,
-          img.naturalHeight,
-        );
+        hw.importSample(profileId, file.name, dataURL, img.naturalWidth, img.naturalHeight);
         showToast("样本图已导入");
       } catch (err) {
-        setCleanError(
-          `样本导入失败：${err instanceof Error ? err.message : String(err)}`,
-        );
+        setCleanError(`样本导入失败：${err instanceof Error ? err.message : String(err)}`);
       }
     },
     [hw, showToast],
   );
 
-  // ===== 打开切割器 =====
   const handleOpenSegmenter = useCallback(
     async (profileId: string, sampleSetId: string) => {
       const prof = project.handwritingProfiles.find((p) => p.id === profileId);
       const ss = prof?.sampleSets.find((s) => s.id === sampleSetId);
       if (!ss) return;
       try {
-        const img = await loadImage(ss.imageBase64);
-        setSegmenterImage(img);
+        setSegmenterImage(await loadImage(ss.imageBase64));
       } catch {
         setSegmenterImage(null);
       }
@@ -420,32 +641,35 @@ export default function App() {
     setSegError(null);
   }, []);
 
-  // 切割器内保存字形
   const handleSaveGlyph = useCallback(
     async (char: string, bbox: GlyphBoundingBox) => {
       if (!segmenterTarget) return;
-      const prof = project.handwritingProfiles.find(
-        (p) => p.id === segmenterTarget.profileId,
-      );
-      const ss = prof?.sampleSets.find(
-        (s) => s.id === segmenterTarget.sampleSetId,
-      );
+      const prof = project.handwritingProfiles.find((p) => p.id === segmenterTarget.profileId);
+      const ss = prof?.sampleSets.find((s) => s.id === segmenterTarget.sampleSetId);
       if (!ss) return;
       setSegSaving(true);
       setSegError(null);
-      const res = await hw.saveGlyph(
-        segmenterTarget.profileId,
-        segmenterTarget.sampleSetId,
-        char,
-        bbox,
-        ss.imageBase64,
-      );
+      const res = await hw.saveGlyph(segmenterTarget.profileId, segmenterTarget.sampleSetId, char, bbox, ss.imageBase64);
       setSegSaving(false);
-      if (!res.ok) {
-        setSegError(res.error);
-      } else {
-        showToast(`已保存字形「${char}」`);
-      }
+      if (!res.ok) setSegError(res.error);
+      else showToast(`已保存字形「${char}」`);
+    },
+    [segmenterTarget, project.handwritingProfiles, hw, showToast],
+  );
+
+  const handleBatchSaveGlyphs = useCallback(
+    async (items: { char: string; bbox: GlyphBoundingBox }[]) => {
+      if (!segmenterTarget) return { saved: 0, skipped: items.length };
+      const prof = project.handwritingProfiles.find((p) => p.id === segmenterTarget.profileId);
+      const ss = prof?.sampleSets.find((s) => s.id === segmenterTarget.sampleSetId);
+      if (!ss) return { saved: 0, skipped: items.length };
+      setSegSaving(true);
+      setSegError(null);
+      const res = await hw.batchSaveGlyphs(segmenterTarget.profileId, segmenterTarget.sampleSetId, items, ss.imageBase64);
+      setSegSaving(false);
+      if (res.error) setSegError(res.error);
+      else if (res.saved > 0) showToast(`批量保存 ${res.saved} 个字形`);
+      return { saved: res.saved, skipped: res.skipped };
     },
     [segmenterTarget, project.handwritingProfiles, hw, showToast],
   );
@@ -458,7 +682,6 @@ export default function App() {
     [segmenterTarget, hw],
   );
 
-  // 自动检测候选框
   const handleDetect = useCallback(
     async (sampleDataURL: string): Promise<GlyphCandidate[]> => {
       setDetecting(true);
@@ -477,88 +700,52 @@ export default function App() {
     [],
   );
 
-  // 批量保存字形
-  const handleBatchSaveGlyphs = useCallback(
-    async (
-      items: { char: string; bbox: GlyphBoundingBox }[],
-    ): Promise<{ saved: number; skipped: number }> => {
-      if (!segmenterTarget) return { saved: 0, skipped: 0 };
-      const prof = project.handwritingProfiles.find(
-        (p) => p.id === segmenterTarget.profileId,
-      );
-      const ss = prof?.sampleSets.find(
-        (s) => s.id === segmenterTarget.sampleSetId,
-      );
-      if (!ss) return { saved: 0, skipped: items.length };
-      setSegSaving(true);
-      setSegError(null);
-      const res = await hw.batchSaveGlyphs(
-        segmenterTarget.profileId,
-        segmenterTarget.sampleSetId,
-        items,
-        ss.imageBase64,
-      );
-      setSegSaving(false);
-      if (res.error) setSegError(res.error);
-      else if (res.saved > 0) showToast(`批量保存 ${res.saved} 个字形`);
-      return { saved: res.saved, skipped: res.skipped };
-    },
-    [segmenterTarget, project.handwritingProfiles, hw, showToast],
+  const segmenterProfile = useMemo<HandwritingProfile | null>(
+    () =>
+      segmenterTarget
+        ? (project.handwritingProfiles.find((p) => p.id === segmenterTarget.profileId) ?? null)
+        : null,
+    [segmenterTarget, project.handwritingProfiles],
+  );
+  const segmenterSampleSet = useMemo(
+    () =>
+      segmenterProfile && segmenterTarget
+        ? (segmenterProfile.sampleSets.find((s) => s.id === segmenterTarget.sampleSetId) ?? null)
+        : null,
+    [segmenterProfile, segmenterTarget],
   );
 
-  // 切割器目标 profile
-  const segmenterProfile = useMemo<HandwritingProfile | null>(() => {
-    if (!segmenterTarget) return null;
-    return (
-      project.handwritingProfiles.find(
-        (p) => p.id === segmenterTarget.profileId,
-      ) ?? null
-    );
-  }, [segmenterTarget, project.handwritingProfiles]);
-  const segmenterSampleSet = useMemo(() => {
-    if (!segmenterProfile || !segmenterTarget) return null;
-    return (
-      segmenterProfile.sampleSets.find(
-        (s) => s.id === segmenterTarget.sampleSetId,
-      ) ?? null
-    );
-  }, [segmenterProfile, segmenterTarget]);
+  // CanvasStage 需要的视图（当前页 + 项目级设置）
+  const stageView = useMemo(
+    () => ({
+      width: activePage?.originalWidth ?? 900,
+      height: activePage?.originalHeight ?? 600,
+      backgroundImage: activePage?.backgroundImage ?? null,
+      textObjects: activePage?.textObjects ?? [],
+      naturalnessEnabled: project.settings.naturalnessEnabled,
+      naturalness: project.settings.naturalness,
+      handwritingProfiles: project.handwritingProfiles,
+      activeHandwritingProfileId: project.activeHandwritingProfileId,
+    }),
+    [project, activePage],
+  );
 
   return (
     <div className="app">
       <header className="app__header">
-        <span>📝 Handwriting Layout</span>
-        <ConnectionBadge
-          status={status}
-          apiBase={apiBase}
-          onReconnect={reconnect}
-          onApiBaseChange={updateApiBase}
-        />
+        <span>📝 {project.name}</span>
+        <ConnectionBadge status={status} apiBase={apiBase} onReconnect={reconnect} onApiBaseChange={updateApiBase} />
         <div className="header-tools" style={{ marginLeft: 8 }}>
-          <button className="btn" onClick={handleLoadProject} title="加载项目 JSON">
-            加载项目
-          </button>
-          <button
-            className="btn"
-            onClick={handleSaveProject}
-            disabled={!project.backgroundImage && project.textObjects.length === 0}
-            title="保存为本地 JSON"
-          >
-            保存项目
-          </button>
-          <button
-            className="btn btn--primary"
-            onClick={handleExportPNG}
-            disabled={!project.backgroundImage}
-            title={project.backgroundImage ? "导出 PNG（原图尺寸）" : "请先上传图片"}
-          >
-            导出 PNG
-          </button>
+          <button className="btn" onClick={handleLoadProject} title="加载项目 JSON">加载</button>
+          <button className="btn" onClick={handleSaveProject} title="保存为本地 JSON">保存</button>
+          <button className="btn" onClick={handleExportSinglePDF} disabled={!activePage} title="当前页 PDF">页 PDF</button>
+          <button className="btn" onClick={handleExportAllPDF} disabled={project.pages.length === 0} title="全部页 PDF">全 PDF</button>
+          <button className="btn btn--primary" onClick={handleExportPNG} disabled={!activePage} title="当前页 PNG">导出 PNG</button>
         </div>
       </header>
 
       <LeftPanel
-        project={project}
+        project={stageView}
         selectedId={selectedId}
         selectMode={selectMode}
         selections={selections}
@@ -578,10 +765,10 @@ export default function App() {
 
       <main className="app__center">
         <div className="canvas-wrap">
-          {project.backgroundImage ? (
+          {activePage?.backgroundImage ? (
             <CanvasStage
-              project={project}
-              image={image}
+              project={stageView}
+              image={activeImage}
               selectedId={selectedId}
               onSelect={setSelectedId}
               onChange={handleChange}
@@ -599,25 +786,36 @@ export default function App() {
           )}
         </div>
 
-        {/* 手写档案管理（画布下方折叠区） */}
-        <div className="hw-panel">
-          <details>
-            <summary>
-              手写档案（{project.handwritingProfiles.length}）·
-              活动档案：
-              {hw.activeProfile?.name ?? "无"}
-            </summary>
-            <ProfileManager
-              profiles={project.handwritingProfiles}
-              activeProfileId={project.activeHandwritingProfileId}
-              onCreate={hw.createProfile}
-              onRename={hw.renameProfile}
-              onDelete={hw.deleteProfile}
-              onSetActive={hw.setActiveProfile}
-              onImportSample={handleImportSample}
-              onOpenSegmenter={handleOpenSegmenter}
-            />
-          </details>
+        <div className="bottom-panels">
+          <PagePanel
+            pages={project.pages}
+            activePageId={project.activePageId}
+            onAddPage={handleAddPage}
+            onDeletePage={handleDeletePage}
+            onDuplicatePage={handleDuplicatePage}
+            onRenamePage={handleRenamePage}
+            onMovePage={handleMovePage}
+            onSetActivePage={handleSetActivePage}
+            onImportImages={handleImportImages}
+          />
+          <div className="hw-panel">
+            <details>
+              <summary>
+                手写档案（{project.handwritingProfiles.length}）·活动：
+                {hw.activeProfile?.name ?? "无"}
+              </summary>
+              <ProfileManager
+                profiles={project.handwritingProfiles}
+                activeProfileId={project.activeHandwritingProfileId}
+                onCreate={hw.createProfile}
+                onRename={hw.renameProfile}
+                onDelete={hw.deleteProfile}
+                onSetActive={hw.setActiveProfile}
+                onImportSample={handleImportSample}
+                onOpenSegmenter={handleOpenSegmenter}
+              />
+            </details>
+          </div>
         </div>
       </main>
 
@@ -659,8 +857,7 @@ function describeError(err: unknown): string {
     let detail = err.body;
     try {
       const j = JSON.parse(err.body);
-      if (j?.detail)
-        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      if (j?.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
     } catch {
       /* keep raw body */
     }
@@ -671,4 +868,56 @@ function describeError(err: unknown): string {
     return err.message;
   }
   return String(err);
+}
+
+/**
+ * 离屏渲染一页为 dataURL（用于非活动页的 PDF 导出）。
+ * 绘制背景图 + 简化的文本框（字体模式用 fillText，glyph 模式用图片）。
+ * 不应用 naturalness 抖动，保证多页导出稳定。
+ */
+async function renderPageOffscreen(
+  page: CanvasPage,
+  glyphImages: Map<string, HTMLImageElement>,
+): Promise<string> {
+  const canvas = document.createElement("canvas");
+  canvas.width = page.originalWidth;
+  canvas.height = page.originalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("无法获取 canvas 上下文");
+
+  // 背景
+  if (page.backgroundImage) {
+    const bg = await loadImage(page.backgroundImage);
+    ctx.drawImage(bg, 0, 0, page.originalWidth, page.originalHeight);
+  } else {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, page.originalWidth, page.originalHeight);
+  }
+
+  // 文本对象（按 zIndex 排序）
+  const sorted = [...page.textObjects].sort((a, b) => a.zIndex - b.zIndex);
+  for (const obj of sorted) {
+    ctx.save();
+    ctx.globalAlpha = obj.style.opacity;
+    ctx.translate(obj.x, obj.y);
+    ctx.rotate((obj.style.rotation * Math.PI) / 180);
+    ctx.font = `${obj.style.fontStyle} ${obj.style.fontWeight} ${obj.style.fontSize}px ${obj.style.fontFamily}`;
+    ctx.fillStyle = obj.style.color;
+
+    if (obj.renderMode === "handwritingGlyph") {
+      // glyph 模式：逐字渲染（这里用 fallback 字体简化，glyph 图片在离屏渲染较复杂）
+      // TODO: 离屏渲染 glyph 图片以保证与活动页一致
+      const lines = obj.text.split("\n");
+      const lh = obj.style.fontSize * obj.style.lineHeight;
+      lines.forEach((line, li) => ctx.fillText(line, 0, li * lh));
+    } else {
+      const lines = obj.text.split("\n");
+      const lh = obj.style.fontSize * obj.style.lineHeight;
+      lines.forEach((line, li) => ctx.fillText(line, 0, li * lh));
+    }
+    ctx.restore();
+  }
+
+  void glyphImages; // 预留：后续离屏渲染 glyph 图片
+  return canvas.toDataURL("image/png");
 }

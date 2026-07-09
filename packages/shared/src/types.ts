@@ -132,29 +132,81 @@ export interface RectRegion {
   height: number;
 }
 
+/** 单页画布数据。第五轮引入多页工程。 */
+export interface CanvasPage {
+  id: string;
+  /** 页面名称（如「第 1 页」） */
+  name: string;
+  /** 页面序号（从 0 开始，用于排序显示） */
+  index: number;
+  /** 背景图 dataURL 或 URL */
+  backgroundImage: string | null;
+  /** 原图宽度（px） */
+  originalWidth: number;
+  /** 原图高度（px） */
+  originalHeight: number;
+  /** 该页的文本对象列表 */
+  textObjects: TextObject[];
+  /** 该页的清除操作历史（栈顶为最近一次），用于撤销 */
+  cleanHistory: CleanHistoryEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 项目级设置 */
+export interface ProjectSettings {
+  /** 是否启用手写自然化（全局） */
+  naturalnessEnabled: boolean;
+  /** 自然化参数（全局） */
+  naturalness: NaturalnessParams;
+}
+
+/** 默认项目设置 */
+export const DEFAULT_SETTINGS: ProjectSettings = {
+  naturalnessEnabled: false,
+  naturalness: { ...DEFAULT_NATURALNESS },
+};
+
 /**
  * 画布工程数据（项目文件格式）。
- * 保存为 JSON 时包含所有可恢复编辑的字段。
+ *
+ * 第五轮起采用多页结构：pages 数组 + activePageId。
+ * 旧单页项目的 backgroundImage/width/height/textObjects/cleanHistory 字段
+ * 在反序列化时自动迁移为 pages[0]，运行时以 pages 为准。
  */
 export interface CanvasProject {
   /** 应用版本，用于后续迁移 */
   appVersion: string;
-  /** 背景图 dataURL 或 URL */
-  backgroundImage: string | null;
-  /** 画布宽度（原图像素） */
-  width: number;
-  /** 画布高度（原图像素） */
-  height: number;
-  /** 文本对象列表 */
-  textObjects: TextObject[];
-  /** 是否启用手写自然化 */
-  naturalnessEnabled: boolean;
-  /** 自然化参数 */
-  naturalness: NaturalnessParams;
-  /** 清除操作历史（栈顶为最近一次），用于撤销 */
-  cleanHistory: CleanHistoryEntry[];
-  /** 手写档案列表（第三轮新增） */
+  /** 项目 id */
+  id: string;
+  /** 项目名称 */
+  name: string;
+  /** 页面列表 */
+  pages: CanvasPage[];
+  /** 当前激活页面 id */
+  activePageId: string | null;
+  /** 项目级设置 */
+  settings: ProjectSettings;
+  /** 手写档案列表（project 级共享，跨页使用） */
   handwritingProfiles: HandwritingProfile[];
   /** 当前激活的手写档案 id（可为 null） */
   activeHandwritingProfileId: string | null;
+  createdAt: string;
+  updatedAt: string;
+
+  // ---- 以下为旧单页字段，仅用于读取旧项目，运行时不再使用 ----
+  /** @deprecated 第五轮起改用 pages[activePage].backgroundImage */
+  backgroundImage?: string | null;
+  /** @deprecated 第五轮起改用 pages[activePage].originalWidth */
+  width?: number;
+  /** @deprecated 第五轮起改用 pages[activePage].originalHeight */
+  height?: number;
+  /** @deprecated 第五轮起改用 pages[activePage].textObjects */
+  textObjects?: TextObject[];
+  /** @deprecated 第五轮起改用 pages[activePage].cleanHistory */
+  cleanHistory?: CleanHistoryEntry[];
+  /** @deprecated 第五轮起改用 settings.naturalnessEnabled */
+  naturalnessEnabled?: boolean;
+  /** @deprecated 第五轮起改用 settings.naturalness */
+  naturalness?: NaturalnessParams;
 }

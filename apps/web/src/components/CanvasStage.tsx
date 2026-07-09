@@ -12,9 +12,25 @@ import {
   applyNaturalness,
   type HandwritingProfile,
   type NaturalizedObject,
+  type NaturalnessParams,
+  type TextObject,
 } from "@hw-layout/shared";
-import type { CanvasProject, TextObject } from "@hw-layout/shared";
 import { GlyphText } from "./GlyphText.js";
+
+/**
+ * CanvasStage 所需的项目视图（多页改造后从 activePage 派生）。
+ * 避免直接依赖完整的 CanvasProject（其 textObjects 等字段已 deprecated optional）。
+ */
+export interface StageView {
+  width: number;
+  height: number;
+  backgroundImage: string | null;
+  textObjects: TextObject[];
+  naturalnessEnabled: boolean;
+  naturalness: NaturalnessParams;
+  handwritingProfiles: HandwritingProfile[];
+  activeHandwritingProfileId: string | null;
+}
 
 /** 用户正在框选的临时矩形（画布坐标）。 */
 interface DraftRect {
@@ -34,7 +50,7 @@ export interface SelectionRect {
 }
 
 interface CanvasStageProps {
-  project: CanvasProject;
+  project: StageView;
   image: HTMLImageElement | null;
   selectedId: string | null;
   onSelect: (id: string | null) => void;

@@ -23,9 +23,9 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 生成唯一 id。 */
-export function uid(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+/** 生成唯一 id（可选 prefix）。 */
+export function uid(prefix = "id"): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /** 生成 32 位无符号随机种子（用于 TextObject.naturalnessSeed）。 */
@@ -71,8 +71,9 @@ export function downloadText(text: string, filename: string, mime = "application
 /**
  * 生成导出文件名：handwriting-layout-YYYYMMDD-HHmmss.png
  * 可传入扩展名（不带点）。
+ * 可选 pageNum：多页导出时附加 -page-001。
  */
-export function exportFilename(ext: string, date = new Date()): string {
+export function exportFilename(ext: string, date = new Date(), pageNum?: number): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const y = date.getFullYear();
   const m = pad(date.getMonth() + 1);
@@ -80,7 +81,11 @@ export function exportFilename(ext: string, date = new Date()): string {
   const hh = pad(date.getHours());
   const mm = pad(date.getMinutes());
   const ss = pad(date.getSeconds());
-  return `handwriting-layout-${y}${m}${d}-${hh}${mm}${ss}.${ext}`;
+  const base = `handwriting-layout-${y}${m}${d}-${hh}${mm}${ss}`;
+  if (pageNum !== undefined) {
+    return `${base}-page-${String(pageNum).padStart(3, "0")}.${ext}`;
+  }
+  return `${base}.${ext}`;
 }
 
 /** 触发文件选择（用于加载项目 JSON）。返回所选文件或 null。 */

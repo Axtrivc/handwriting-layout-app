@@ -1,9 +1,15 @@
 import { useRef } from "react";
-import type { CanvasProject, NaturalnessParams } from "@hw-layout/shared";
-import type { SelectionRect } from "./CanvasStage.js";
+import type { NaturalnessParams } from "@hw-layout/shared";
+import type { SelectionRect, StageView } from "./CanvasStage.js";
+
+/** LeftPanel 所需的项目视图（多页改造后从 activePage 派生）。 */
+type LeftPanelProject = Pick<
+  StageView,
+  "backgroundImage" | "textObjects" | "naturalnessEnabled" | "naturalness"
+>;
 
 interface LeftPanelProps {
-  project: CanvasProject;
+  project: LeftPanelProject;
   selectedId: string | null;
   selectMode: boolean;
   selections: SelectionRect[];
