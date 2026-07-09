@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type Konva from "konva";
 import {
   DEFAULT_TEXT_STYLE,
@@ -25,8 +25,16 @@ import { PagePanel } from "./components/PagePanel.js";
 import { useGlyphImages } from "./components/GlyphText.js";
 import { useConnection } from "./lib/useConnection.js";
 import { useHandwriting } from "./lib/useHandwriting.js";
+import { useHistory } from "./lib/useHistory.js";
 import { ApiError, cleanRegion, detectGlyphCandidates } from "./lib/apiClient.js";
-import { exportPagesToPDF, exportSinglePageToPDF } from "./lib/pdfExport.js";
+import { exportPagesToPDF, exportSinglePageToPDF, type PdfCompression } from "./lib/pdfExport.js";
+import { exportPagesToZip } from "./lib/zipExport.js";
+import {
+  preloadPageGlyphs,
+  renderPageToDataURL as renderPageOffscreenDataURL,
+} from "./lib/offscreenRender.js";
+import { DEFAULT_EXPORT_SETTINGS, type ExportSettings } from "./lib/exportTypes.js";
+import { missingChars } from "@hw-layout/shared";
 import {
   downloadText,
   downloadURL,
@@ -101,6 +109,9 @@ export default function App() {
     () => activePage?.textObjects.find((t) => t.id === selectedId) ?? null,
     [activePage, selectedId],
   );
+
+  // ===== 文本撤销栈（每页独立） =====
+  const history = useHistory();
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -291,6 +302,7 @@ export default function App() {
 
   const handleAddText = useCallback(() => {
     if (!activePage || selectMode) return;
+    history.push(activePage.id, activePage.textObjects);
     const newObj: TextObject = {
       id: uid(),
       text: "双击编辑文本",
@@ -308,23 +320,25 @@ export default function App() {
       updatedAt: nowISO(),
     }));
     setSelectedId(newObj.id);
-  }, [activePage, selectMode, nextZ, updatePage]);
+  }, [activePage, selectMode, nextZ, updatePage, history]);
 
   const handleChange = useCallback(
     (obj: TextObject) => {
       if (!activePage) return;
+      history.push(activePage.id, activePage.textObjects);
       updatePage(activePage.id, (pg) => ({
         ...pg,
         textObjects: pg.textObjects.map((t) => (t.id === obj.id ? obj : t)),
         updatedAt: nowISO(),
       }));
     },
-    [activePage, updatePage],
+    [activePage, updatePage, history],
   );
 
   const handleDelete = useCallback(
     (id: string) => {
       if (!activePage) return;
+      history.push(activePage.id, activePage.textObjects);
       updatePage(activePage.id, (pg) => ({
         ...pg,
         textObjects: pg.textObjects.filter((t) => t.id !== id),
@@ -332,7 +346,7 @@ export default function App() {
       }));
       if (selectedId === id) setSelectedId(null);
     },
-    [activePage, selectedId, updatePage],
+    [activePage, selectedId, updatePage, history],
   );
 
   const handleDuplicate = useCallback(
@@ -340,6 +354,7 @@ export default function App() {
       if (!activePage) return;
       const src = activePage.textObjects.find((t) => t.id === id);
       if (!src) return;
+      history.push(activePage.id, activePage.textObjects);
       const copy: TextObject = {
         ...src,
         id: uid(),
@@ -356,7 +371,7 @@ export default function App() {
       }));
       setSelectedId(copy.id);
     },
-    [activePage, nextZ, updatePage],
+    [activePage, nextZ, updatePage, history],
   );
 
   const handleBringToFront = useCallback(
@@ -380,6 +395,42 @@ export default function App() {
     },
     [activePage, handleChange],
   );
+
+  // ===== 文本撤销/重做 =====
+  const handleUndo = useCallback(() => {
+    if (!activePage) return;
+    const prev = history.undo(activePage.id);
+    if (prev) {
+      updatePage(activePage.id, (pg) => ({ ...pg, textObjects: prev, updatedAt: nowISO() }));
+      showToast("已撤销");
+    }
+  }, [activePage, history, updatePage, showToast]);
+
+  const handleRedo = useCallback(() => {
+    if (!activePage) return;
+    const next = history.redo(activePage.id);
+    if (next) {
+      updatePage(activePage.id, (pg) => ({ ...pg, textObjects: next, updatedAt: nowISO() }));
+      showToast("已重做");
+    }
+  }, [activePage, history, updatePage, showToast]);
+
+  // 快捷键 Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleUndo, handleRedo]);
 
   // ===== 自然化（项目级设置） =====
   const handleToggleNaturalness = useCallback((enabled: boolean) => {
@@ -479,30 +530,63 @@ export default function App() {
 
   // ===== 导出 =====
   const exportSeedRef = useRef<number>(randomSeed());
+  const [exportSettings, setExportSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
+  const [exportProgress, setExportProgress] = useState<string | null>(null);
 
-  // 渲染某一页到 dataURL（临时挂载 Stage 并导出）
-  const renderPageToDataURL = useCallback(
-    async (page: CanvasPage): Promise<string> => {
-      // 当前活动页用已挂载的 stage 直接导出；其他页需要临时构建
-      if (page.id === project.activePageId && stageRef.current) {
-        const stage = stageRef.current;
-        return stage.toDataURL({
-          pixelRatio: 1 / stage.scaleX(),
-          x: 0,
-          y: 0,
-          width: page.originalWidth,
-          height: page.originalHeight,
-        });
-      }
-      // 非活动页：用离屏 canvas 绘制背景 + 文本（简化版，不应用 naturalness 以保证稳定）
-      return renderPageOffscreen(page, glyphImages);
+  // 用统一的离屏渲染某一页（活动页与非活动页视觉一致，含 glyph + naturalness）
+  const renderPage = useCallback(
+    async (page: CanvasPage, scale: number) => {
+      // 预加载该页 glyph
+      const glyphStore = await preloadPageGlyphs(
+        page,
+        project.handwritingProfiles,
+        project.activeHandwritingProfileId,
+      );
+      return renderPageOffscreenDataURL(page, {
+        profiles: project.handwritingProfiles,
+        activeProfileId: project.activeHandwritingProfileId,
+        naturalness: project.settings.naturalness,
+        naturalnessEnabled: project.settings.naturalnessEnabled,
+        exportSeed: exportSeedRef.current,
+        scale,
+        glyphStore,
+      });
     },
-    [project.activePageId, glyphImages],
+    [project],
   );
 
-  // 导出当前页 PNG
+  // 缺字检查：返回各页缺字汇总
+  const checkMissingBeforeExport = useCallback((): string | null => {
+    const profileMap = new Map(
+      project.handwritingProfiles.map((p) => [p.id, p]),
+    );
+    const perPage: string[] = [];
+    for (let i = 0; i < project.pages.length; i++) {
+      const page = project.pages[i];
+      const allMissing = new Set<string>();
+      for (const obj of page.textObjects) {
+        if (obj.renderMode !== "handwritingGlyph") continue;
+        const pid = obj.handwritingProfileId ?? project.activeHandwritingProfileId;
+        const prof = pid ? (profileMap.get(pid) ?? null) : null;
+        if (!prof) continue;
+        const covered = new Set(prof.glyphs.map((g) => g.char));
+        for (const m of missingChars(obj.text, covered)) allMissing.add(m);
+      }
+      if (allMissing.size > 0) {
+        perPage.push(`第 ${i + 1} 页：${[...allMissing].join("、")}`);
+      }
+    }
+    if (perPage.length === 0) return null;
+    return `部分页面有缺失字形，将用普通字体代替：\n${perPage.join("\n")}`;
+  }, [project]);
+
+  // 导出当前页 PNG（用活动页 Stage，高清）
   const handleExportPNG = useCallback(async () => {
     if (!activePage || !stageRef.current) return;
+    // 缺字提示（不阻止）
+    const miss = checkMissingBeforeExport();
+    if (miss && !window.confirm(`${miss}\n\n是否继续导出？`)) return;
+
     const stage = stageRef.current;
     const prevSelected = selectedId;
     const prevSelectMode = selectMode;
@@ -512,7 +596,7 @@ export default function App() {
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
     try {
       const dataURL = stage.toDataURL({
-        pixelRatio: 1 / stage.scaleX(),
+        pixelRatio: exportSettings.pngScale / stage.scaleX(),
         x: 0,
         y: 0,
         width: activePage.originalWidth,
@@ -528,39 +612,78 @@ export default function App() {
       setSelectMode(prevSelectMode);
       setExporting(false);
     }
-  }, [activePage, selectedId, selectMode, project.pages, showToast]);
+  }, [activePage, selectedId, selectMode, project.pages, exportSettings.pngScale, showToast, checkMissingBeforeExport]);
 
   // 导出当前页 PDF
   const handleExportSinglePDF = useCallback(async () => {
     if (!activePage) return;
-    showToast("正在生成 PDF…");
+    const miss = checkMissingBeforeExport();
+    if (miss && !window.confirm(`${miss}\n\n是否继续导出？`)) return;
+    setExportProgress("正在生成 PDF…");
     try {
-      const dataURL = await renderPageToDataURL(activePage);
-      exportSinglePageToPDF(dataURL, activePage.originalWidth, activePage.originalHeight);
+      const dataURL = await renderPage(activePage, exportSettings.pngScale);
+      exportSinglePageToPDF(
+        dataURL,
+        activePage.originalWidth * exportSettings.pngScale,
+        activePage.originalHeight * exportSettings.pngScale,
+        exportSettings.pdfCompression,
+      );
       showToast("已导出当前页 PDF");
     } catch (err) {
       setCleanError(`PDF 导出失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExportProgress(null);
     }
-  }, [activePage, renderPageToDataURL, showToast]);
+  }, [activePage, renderPage, exportSettings, showToast, checkMissingBeforeExport]);
 
   // 导出全部页 PDF
   const handleExportAllPDF = useCallback(async () => {
     if (project.pages.length === 0) return;
-    showToast(`正在生成 ${project.pages.length} 页 PDF…`);
+    const miss = checkMissingBeforeExport();
+    if (miss && !window.confirm(`${miss}\n\n是否继续导出？`)) return;
     try {
-      const dataURLs: string[] = [];
-      const sizes: { width: number; height: number }[] = [];
-      for (const page of project.pages) {
-        const url = await renderPageToDataURL(page);
-        dataURLs.push(url);
-        sizes.push({ width: page.originalWidth, height: page.originalHeight });
+      const inputs: { dataURL: string; width: number; height: number }[] = [];
+      for (let i = 0; i < project.pages.length; i++) {
+        setExportProgress(`正在生成 PDF ${i + 1}/${project.pages.length}`);
+        const page = project.pages[i];
+        const dataURL = await renderPage(page, exportSettings.pngScale);
+        inputs.push({
+          dataURL,
+          width: page.originalWidth * exportSettings.pngScale,
+          height: page.originalHeight * exportSettings.pngScale,
+        });
       }
-      exportPagesToPDF(dataURLs, sizes);
+      exportPagesToPDF(inputs, exportSettings.pdfCompression);
       showToast(`已导出 ${project.pages.length} 页 PDF`);
     } catch (err) {
       setCleanError(`PDF 导出失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExportProgress(null);
     }
-  }, [project.pages, renderPageToDataURL, showToast]);
+  }, [project.pages, renderPage, exportSettings, showToast, checkMissingBeforeExport]);
+
+  // 导出全部页 PNG ZIP
+  const handleExportAllZip = useCallback(async () => {
+    if (project.pages.length === 0) return;
+    const miss = checkMissingBeforeExport();
+    if (miss && !window.confirm(`${miss}\n\n是否继续导出？`)) return;
+    try {
+      await exportPagesToZip(project.pages, {
+        profiles: project.handwritingProfiles,
+        activeProfileId: project.activeHandwritingProfileId,
+        naturalness: project.settings.naturalness,
+        naturalnessEnabled: project.settings.naturalnessEnabled,
+        exportSeed: exportSeedRef.current,
+        scale: exportSettings.pngScale,
+        onProgress: (cur, total) => setExportProgress(`正在导出 ${cur}/${total}`),
+      });
+      showToast(`已导出 ${project.pages.length} 页 PNG ZIP`);
+    } catch (err) {
+      setCleanError(`ZIP 导出失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExportProgress(null);
+    }
+  }, [project.pages, project.handwritingProfiles, project.activeHandwritingProfileId, project.settings, exportSettings.pngScale, showToast, checkMissingBeforeExport]);
 
   // ===== 项目保存 / 加载 =====
   const handleSaveProject = useCallback(() => {
@@ -738,10 +861,33 @@ export default function App() {
         <div className="header-tools" style={{ marginLeft: 8 }}>
           <button className="btn" onClick={handleLoadProject} title="加载项目 JSON">加载</button>
           <button className="btn" onClick={handleSaveProject} title="保存为本地 JSON">保存</button>
+          <button className="btn" onClick={handleUndo} disabled={!activePage || !history.canUndo(activePage.id)} title="撤销 (Ctrl+Z)">↶</button>
+          <button className="btn" onClick={handleRedo} disabled={!activePage || !history.canRedo(activePage.id)} title="重做 (Ctrl+Y)">↷</button>
+          <select
+            className="export-scale-select"
+            value={exportSettings.pngScale}
+            onChange={(e) => setExportSettings((s) => ({ ...s, pngScale: Number(e.target.value) }))}
+            title="导出倍率"
+          >
+            <option value={1}>1x</option>
+            <option value={2}>2x</option>
+          </select>
+          <select
+            className="export-scale-select"
+            value={exportSettings.pdfCompression}
+            onChange={(e) => setExportSettings((s) => ({ ...s, pdfCompression: e.target.value as PdfCompression }))}
+            title="PDF 压缩质量"
+          >
+            <option value="FAST">PDF 快</option>
+            <option value="MEDIUM">PDF 中</option>
+            <option value="SLOW">PDF 高质</option>
+          </select>
           <button className="btn" onClick={handleExportSinglePDF} disabled={!activePage} title="当前页 PDF">页 PDF</button>
           <button className="btn" onClick={handleExportAllPDF} disabled={project.pages.length === 0} title="全部页 PDF">全 PDF</button>
+          <button className="btn" onClick={handleExportAllZip} disabled={project.pages.length === 0} title="全部页 PNG ZIP">PNG ZIP</button>
           <button className="btn btn--primary" onClick={handleExportPNG} disabled={!activePage} title="当前页 PNG">导出 PNG</button>
         </div>
+        {exportProgress && <div className="export-progress">{exportProgress}</div>}
       </header>
 
       <LeftPanel
@@ -870,54 +1016,17 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
+/** 判断事件目标是否为可编辑元素（输入框/文本域），避免快捷键误触发。 */
+function isEditableTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+}
+
 /**
  * 离屏渲染一页为 dataURL（用于非活动页的 PDF 导出）。
  * 绘制背景图 + 简化的文本框（字体模式用 fillText，glyph 模式用图片）。
  * 不应用 naturalness 抖动，保证多页导出稳定。
  */
-async function renderPageOffscreen(
-  page: CanvasPage,
-  glyphImages: Map<string, HTMLImageElement>,
-): Promise<string> {
-  const canvas = document.createElement("canvas");
-  canvas.width = page.originalWidth;
-  canvas.height = page.originalHeight;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("无法获取 canvas 上下文");
-
-  // 背景
-  if (page.backgroundImage) {
-    const bg = await loadImage(page.backgroundImage);
-    ctx.drawImage(bg, 0, 0, page.originalWidth, page.originalHeight);
-  } else {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, page.originalWidth, page.originalHeight);
-  }
-
-  // 文本对象（按 zIndex 排序）
-  const sorted = [...page.textObjects].sort((a, b) => a.zIndex - b.zIndex);
-  for (const obj of sorted) {
-    ctx.save();
-    ctx.globalAlpha = obj.style.opacity;
-    ctx.translate(obj.x, obj.y);
-    ctx.rotate((obj.style.rotation * Math.PI) / 180);
-    ctx.font = `${obj.style.fontStyle} ${obj.style.fontWeight} ${obj.style.fontSize}px ${obj.style.fontFamily}`;
-    ctx.fillStyle = obj.style.color;
-
-    if (obj.renderMode === "handwritingGlyph") {
-      // glyph 模式：逐字渲染（这里用 fallback 字体简化，glyph 图片在离屏渲染较复杂）
-      // TODO: 离屏渲染 glyph 图片以保证与活动页一致
-      const lines = obj.text.split("\n");
-      const lh = obj.style.fontSize * obj.style.lineHeight;
-      lines.forEach((line, li) => ctx.fillText(line, 0, li * lh));
-    } else {
-      const lines = obj.text.split("\n");
-      const lh = obj.style.fontSize * obj.style.lineHeight;
-      lines.forEach((line, li) => ctx.fillText(line, 0, li * lh));
-    }
-    ctx.restore();
-  }
-
-  void glyphImages; // 预留：后续离屏渲染 glyph 图片
-  return canvas.toDataURL("image/png");
-}
+// 已移至 lib/offscreenRender.ts（支持 handwritingGlyph + naturalness + 对齐）

@@ -77,6 +77,15 @@
 - PNG 导出升级：当前页，文件名带页码（-page-001）
 - 项目 JSON 多页 round-trip，旧项目兼容
 
+### 第六轮：导出增强 + 离屏 glyph + ZIP + 撤销栈（已完成）
+
+- 统一渲染核心：shared/textLayout.ts（分行/行宽/对齐/variant/seed/fallback）
+- 非活动页 PDF 离屏渲染 handwritingGlyph（不再 fallback 字体）
+- 全部页 PNG ZIP 导出（jszip，文件名带页码，进度提示）
+- 导出质量设置：1x/2x 倍率、PDF 压缩质量（FAST/MEDIUM/SLOW）
+- 文本撤销栈：每页独立 undo/redo（add/delete/move/style/content/复制），Ctrl+Z/Y
+- 导出前缺字检查：汇总各页缺字提示，不阻止导出
+
 ### 第六阶段：导出与集成
 
 - PDF 导出（矢量 + 光学）
