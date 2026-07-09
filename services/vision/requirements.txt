@@ -1,0 +1,4 @@
+# Python 3.14 兼容版本（使用预编译 wheel）
+opencv-python-headless>=4.10
+Pillow>=11.0
+numpy>=2.1

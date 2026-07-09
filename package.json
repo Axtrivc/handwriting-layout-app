@@ -1,0 +1,18 @@
+{
+  "name": "handwriting-layout-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "合规的本地桌面应用：个人笔记美化、扫描稿恢复、模板重排版、个人手写风格排版。",
+  "workspaces": [
+    "packages/shared",
+    "apps/web",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "build:shared": "echo \"shared is source-only, no build step\" && exit 0",
+    "build:web": "npm --workspace @hw-layout/web run build",
+    "typecheck:web": "npm --workspace @hw-layout/web run typecheck",
+    "typecheck:desktop": "npm --workspace @hw-layout/desktop run typecheck",
+    "typecheck": "npm run typecheck:web && npm run typecheck:desktop"
+  }
+}

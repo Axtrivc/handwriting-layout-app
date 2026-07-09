@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Electron
+release/
+
+# Vite
+.vite/
+
+# Local env
+.env
+.env.local
+
+# Python
+*.egg-info/
+.pytest_cache/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Storage (keep dir structure + README, ignore user data)
+storage/projects/*
+storage/outputs/*
+!storage/projects/README.txt
+!storage/outputs/README.txt
