@@ -3,14 +3,8 @@
  *
  * TODO: 后续用 zod 或 pydantic schema 双向同步校验。
  */
-
-/** 矩形区域（用于清理字迹的框选） */
-export interface RectRegion {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
+import type { RectRegion } from "./types.js";
+export type { RectRegion } from "./types.js";
 
 /** POST /clean-region 请求 */
 export interface CleanRegionRequest {

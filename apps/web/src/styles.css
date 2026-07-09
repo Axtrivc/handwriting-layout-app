@@ -68,6 +68,32 @@ body {
   justify-content: center;
 }
 
+/* 轻提示 */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(26, 26, 26, 0.92);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 1000;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  animation: toast-in 0.2s ease;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 .panel__title {
   font-size: 13px;
   color: var(--muted);
@@ -276,4 +302,51 @@ body {
   max-height: 60px;
   overflow: auto;
   word-break: break-all;
+}
+
+/* 自然化参数滑块组 */
+.nat-params {
+  margin-top: 8px;
+}
+.nat-params__item {
+  margin-bottom: 8px;
+}
+.nat-params__item label {
+  font-size: 11px;
+}
+
+/* 分段按钮 */
+.seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg__btn {
+  flex: 1;
+  padding: 5px 0;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+}
+.seg__btn:last-child {
+  border-right: none;
+}
+.seg__btn:hover {
+  background: rgba(47, 109, 246, 0.06);
+}
+.seg__btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 头部工具组 */
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }

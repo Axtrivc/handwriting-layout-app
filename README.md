@@ -87,4 +87,18 @@ pnpm dev:api
 
 ## MVP 范围
 
-详见 [docs/mvp-plan.md](docs/mvp-plan.md)。
+详见 [docs/mvp-plan.md](docs/mvp-plan.md)。冒烟测试流程见 [docs/smoke-test.md](docs/smoke-test.md)。
+
+## 当前可用功能（v0.2.0）
+
+- **扫描稿编辑**：上传图片 → 按原图比例显示 → 滚轮缩放 / 空格拖拽平移视图
+- **文本对象**：添加 / 选中 / 拖拽 / 删除 / 复制 / 层级置顶置底；StylePanel 实时修改字体、字号、字距、行距、对齐、字色、粗体/斜体、透明度、旋转、轻微模糊
+- **清除字迹**：框选模式拖拽生成矩形选区（可拖角调整）→ 调用 `/clean-region`（OpenCV Telea inpaint）→ 替换背景；支持撤销一次
+- **手写自然化**：可控参数（位置/旋转/透明度/字号/基线抖动）；编辑时不抖、导出时按固定 seed 应用，重复导出结果一致
+- **导出 PNG**：含背景 + 全部文字 + 自然化效果；原图尺寸不被显示缩放降低；文件名 `handwriting-layout-YYYYMMDD-HHmmss.png`
+- **项目存档**：保存/加载本地 JSON（含背景 base64、宽高、文字、样式、自然化、清除历史、appVersion），加载后可继续编辑导出
+- **后端连接状态**：UI 显示 connected/disconnected/error，可配置后端地址
+
+## 合规边界
+
+仅用于个人笔记美化、扫描稿恢复、模板重排版、个人手写风格排版。不实现签名、证件、合同、票据、考试/作业冒充提交、伪造他人笔迹等功能。详见 [docs/product-boundary.md](docs/product-boundary.md)。

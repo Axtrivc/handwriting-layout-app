@@ -1,15 +1,36 @@
-import type { TextObject } from "@hw-layout/shared";
+import type {
+  TextAlign,
+  TextObject,
+} from "@hw-layout/shared";
 
 interface StylePanelProps {
   selected: TextObject | null;
   onChange: (obj: TextObject) => void;
   onDelete: (id: string) => void;
+  onDuplicate: (id: string) => void;
+  onBringToFront: (id: string) => void;
+  onSendToBack: (id: string) => void;
 }
+
+/** 可选字体族（系统字体为主，避免引入外部字体包）。 */
+const FONT_OPTIONS: { label: string; value: string }[] = [
+  { label: "手写风 (Cursive)", value: "cursive, 'Comic Sans MS', 'PingFang SC', sans-serif" },
+  { label: "宋体 / Serif", value: "'Songti SC', 'SimSun', serif" },
+  { label: "黑体 / Sans", value: "'PingFang SC', 'Microsoft YaHei', sans-serif" },
+  { label: "等宽 / Mono", value: "'Courier New', 'Consolas', monospace" },
+];
 
 /**
  * 右侧样式控制面板：调整选中文本的各项参数。
  */
-export function StylePanel({ selected, onChange, onDelete }: StylePanelProps) {
+export function StylePanel({
+  selected,
+  onChange,
+  onDelete,
+  onDuplicate,
+  onBringToFront,
+  onSendToBack,
+}: StylePanelProps) {
   if (!selected) {
     return (
       <aside className="app__right">
@@ -35,25 +56,29 @@ export function StylePanel({ selected, onChange, onDelete }: StylePanelProps) {
         />
       </div>
 
-      <p className="panel__title">位置</p>
-      <div className="field">
-        <label>X (px)</label>
-        <input
-          type="number"
-          value={Math.round(selected.x)}
-          onChange={(e) => onChange({ ...selected, x: Number(e.target.value) })}
-        />
-      </div>
-      <div className="field">
-        <label>Y (px)</label>
-        <input
-          type="number"
-          value={Math.round(selected.y)}
-          onChange={(e) => onChange({ ...selected, y: Number(e.target.value) })}
-        />
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        <button className="btn" style={{ flex: 1 }} onClick={() => onDuplicate(selected.id)}>
+          复制
+        </button>
+        <button className="btn" style={{ flex: 1 }} onClick={() => onBringToFront(selected.id)}>
+          置顶
+        </button>
+        <button className="btn" style={{ flex: 1 }} onClick={() => onSendToBack(selected.id)}>
+          置底
+        </button>
       </div>
 
       <p className="panel__title">字体</p>
+      <div className="field">
+        <label>字体族</label>
+        <select value={s.fontFamily} onChange={(e) => set({ fontFamily: e.target.value })}>
+          {FONT_OPTIONS.map((f) => (
+            <option key={f.value} value={f.value}>
+              {f.label}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="field">
         <label>字号: {Math.round(s.fontSize)}px</label>
         <input
@@ -88,13 +113,51 @@ export function StylePanel({ selected, onChange, onDelete }: StylePanelProps) {
         />
       </div>
       <div className="field">
-        <label>颜色</label>
+        <label>对齐</label>
+        <div className="seg">
+          {(["left", "center", "right"] as TextAlign[]).map((a) => (
+            <button
+              key={a}
+              className={`seg__btn ${s.align === a ? "is-active" : ""}`}
+              onClick={() => set({ align: a })}
+            >
+              {a === "left" ? "左" : a === "center" ? "中" : "右"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <p className="panel__title">外观</p>
+      <div className="field">
+        <label>字色</label>
         <input
           type="color"
           value={s.color}
           onChange={(e) => set({ color: e.target.value })}
           style={{ width: "100%", height: 32, padding: 0 }}
         />
+      </div>
+      <div className="field">
+        <label>粗细 / 倾斜</label>
+        <div className="seg">
+          <button
+            className={`seg__btn ${s.fontWeight === "bold" ? "is-active" : ""}`}
+            onClick={() =>
+              set({ fontWeight: s.fontWeight === "bold" ? "normal" : "bold" })
+            }
+          >
+            B
+          </button>
+          <button
+            className={`seg__btn ${s.fontStyle === "italic" ? "is-active" : ""}`}
+            style={{ fontStyle: "italic" }}
+            onClick={() =>
+              set({ fontStyle: s.fontStyle === "italic" ? "normal" : "italic" })
+            }
+          >
+            I
+          </button>
+        </div>
       </div>
       <div className="field">
         <label>透明度: {Math.round(s.opacity * 100)}%</label>
@@ -117,6 +180,21 @@ export function StylePanel({ selected, onChange, onDelete }: StylePanelProps) {
           value={s.rotation}
           onChange={(e) => set({ rotation: Number(e.target.value) })}
         />
+      </div>
+      <div className="field">
+        <label>
+          轻微模糊: {s.blur.toFixed(1)}px
+          <span className="hint">（模拟墨迹柔边）</span>
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={1.5}
+          step={0.1}
+          value={s.blur}
+          onChange={(e) => set({ blur: Number(e.target.value) })}
+        />
+        {/* TODO: 混合模式（multiply 正片叠底等）后续阶段实现 */}
       </div>
 
       <button
