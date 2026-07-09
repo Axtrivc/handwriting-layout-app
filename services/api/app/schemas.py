@@ -91,3 +91,43 @@ class GlyphCandidateItem(BaseModel):
 class DetectGlyphCandidatesResponse(BaseModel):
     candidates: list[GlyphCandidateItem]
     count: int
+
+
+# ===== OCR =====
+
+class OcrBBox(BaseModel):
+    x: int = Field(..., ge=0)
+    y: int = Field(..., ge=0)
+    width: int = Field(..., gt=0)
+    height: int = Field(..., gt=0)
+
+
+class OcrCandidateItem(BaseModel):
+    text: str
+    confidence: float
+    bbox: OcrBBox | None = None
+    provider: str
+
+
+class OcrResultResponse(BaseModel):
+    candidates: list[OcrCandidateItem]
+    provider: str
+    status: str  # ok | unavailable | error
+    message: str | None = None
+
+
+class OcrGlyphRequest(BaseModel):
+    image: str = Field(..., description="单个字形图 base64")
+    mime: str = Field("image/png")
+
+
+class OcrSampleRequest(BaseModel):
+    image: str = Field(..., description="样本图 base64")
+    mime: str = Field("image/png")
+    regions: list[OcrBBox] | None = None
+
+
+class SuggestGlyphLabelsRequest(BaseModel):
+    image: str = Field(..., description="样本图 base64")
+    mime: str = Field("image/png")
+    candidates: list[GlyphBBox] = Field(..., description="候选框列表")

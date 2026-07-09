@@ -474,6 +474,12 @@ body {
   z-index: 1000;
 }
 
+.dirty-dot {
+  color: #e0a800;
+  margin-left: 4px;
+  font-size: 10px;
+}
+
 /* ===== 手写档案管理 ===== */
 .hw-panel {
   margin-top: 16px;

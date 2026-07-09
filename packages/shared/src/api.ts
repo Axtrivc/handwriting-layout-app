@@ -7,6 +7,7 @@ import type { RectRegion } from "./types.js";
 import type { GlyphBoundingBox, GlyphCandidate } from "./handwriting.js";
 export type { RectRegion } from "./types.js";
 export type { GlyphCandidate } from "./handwriting.js";
+export type { OcrCandidateItem, OcrResultResponse } from "./ocr.js";
 
 /** POST /clean-region 请求 */
 export interface CleanRegionRequest {
@@ -96,4 +97,24 @@ export interface DetectGlyphCandidatesRequest {
 export interface DetectGlyphCandidatesResponse {
   candidates: GlyphCandidate[];
   count: number;
+}
+
+/** POST /ocr-glyph 请求 */
+export interface OcrGlyphRequest {
+  image: string;
+  mime: string;
+}
+
+/** POST /ocr-sample 请求 */
+export interface OcrSampleRequest {
+  image: string;
+  mime: string;
+  regions?: RectRegion[];
+}
+
+/** POST /suggest-glyph-labels 请求 */
+export interface SuggestGlyphLabelsRequest {
+  image: string;
+  mime: string;
+  candidates: GlyphBoundingBox[];
 }

@@ -18,6 +18,7 @@ from .routes.clean import router as clean_router
 from .routes.export import router as export_router
 from .routes.glyph import router as glyph_router
 from .routes.detect import router as detect_router
+from .routes.ocr import router as ocr_router
 from .schemas import HealthResponse
 
 app = FastAPI(
@@ -38,6 +39,7 @@ app.include_router(clean_router, tags=["clean"])
 app.include_router(export_router, tags=["export"])
 app.include_router(glyph_router, tags=["glyph"])
 app.include_router(detect_router, tags=["detect"])
+app.include_router(ocr_router, tags=["ocr"])
 
 
 @app.get("/health", response_model=HealthResponse)

@@ -86,6 +86,17 @@
 - 文本撤销栈：每页独立 undo/redo（add/delete/move/style/content/复制），Ctrl+Z/Y
 - 导出前缺字检查：汇总各页缺字提示，不阻止导出
 
+### 第七轮：OCR 辅助标注 + 导出懒加载 + 体验打磨（已完成）
+
+- OCR provider 抽象（vision/ocr.py）：RapidOCR/EasyOCR/mock 可插拔，可选依赖不崩
+- OCR 端点：/ocr/status、/ocr-glyph、/ocr-sample、/suggest-glyph-labels
+- GlyphSegmenter OCR 辅助：识别按钮、建议显示、置信度分级（high/medium/low）
+- 高置信度（≥0.85）一键应用，中低不自动，低置信度清空
+- 标注工作流：键盘导航（←/→/Enter/Delete）、自动跳转、过滤（未标注/低置信度）
+- 批量保存增强：OCR 建议保存、跳过空字符、保存前摘要统计
+- 导出模块懒加载：jspdf/jszip 改为 dynamic import，降低主包体积
+- dirty/clean 状态：未保存修改提示、刷新前警告、标题栏红点
+
 ### 第六阶段：导出与集成
 
 - PDF 导出（矢量 + 光学）

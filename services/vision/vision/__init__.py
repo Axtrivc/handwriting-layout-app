@@ -28,6 +28,17 @@ from .glyph_detect import (  # noqa: F401
     sort_candidates_reading_order,
     detect_and_sort,
 )
+from .ocr import (  # noqa: F401
+    OcrCandidate,
+    OcrResult,
+    recognize_text_regions,
+    recognize_single_glyph,
+    suggest_glyph_labels,
+    is_ocr_available,
+    get_provider_name,
+    register_provider,
+    register_mock_provider,
+)
 
 __all__ = [
     "image_to_b64",
@@ -49,4 +60,13 @@ __all__ = [
     "group_candidates_by_rows",
     "sort_candidates_reading_order",
     "detect_and_sort",
+    "OcrCandidate",
+    "OcrResult",
+    "recognize_text_regions",
+    "recognize_single_glyph",
+    "suggest_glyph_labels",
+    "is_ocr_available",
+    "get_provider_name",
+    "register_provider",
+    "register_mock_provider",
 ]

@@ -6,3 +6,4 @@ export * from "./project.js";
 export * from "./handwriting.js";
 export * from "./glyph_quality.js";
 export * from "./textLayout.js";
+export * from "./ocr.js";

@@ -16,8 +16,12 @@ import {
   type DetectGlyphCandidatesResponse,
   type ExportRequest,
   type ExportResponse,
+  type OcrResultResponse,
+  type OcrSampleRequest,
+  type OcrGlyphRequest,
   type SegmentGlyphRequest,
   type SegmentGlyphResponse,
+  type SuggestGlyphLabelsRequest,
 } from "@hw-layout/shared";
 
 declare global {
@@ -150,6 +154,40 @@ export async function detectGlyphCandidates(
   req: DetectGlyphCandidatesRequest,
 ): Promise<DetectGlyphCandidatesResponse> {
   return request<DetectGlyphCandidatesResponse>("/detect-glyph-candidates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+/** 查询 OCR 可用性。 */
+export async function getOcrStatus(): Promise<OcrResultResponse> {
+  return request<OcrResultResponse>("/ocr/status", { method: "GET" }, 5000);
+}
+
+/** 调用 /ocr-glyph 识别单个字形。 */
+export async function ocrGlyph(req: OcrGlyphRequest): Promise<OcrResultResponse> {
+  return request<OcrResultResponse>("/ocr-glyph", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+/** 调用 /ocr-sample 识别整张样本图。 */
+export async function ocrSample(req: OcrSampleRequest): Promise<OcrResultResponse> {
+  return request<OcrResultResponse>("/ocr-sample", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+/** 调用 /suggest-glyph-labels 对候选框逐个 OCR。 */
+export async function suggestGlyphLabels(
+  req: SuggestGlyphLabelsRequest,
+): Promise<OcrResultResponse> {
+  return request<OcrResultResponse>("/suggest-glyph-labels", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),

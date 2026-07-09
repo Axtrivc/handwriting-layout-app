@@ -13,6 +13,7 @@ import {
   type GlyphCandidate,
   type HandwritingProfile,
   type NaturalnessParams,
+  type OcrResultResponse,
   type TextObject,
 } from "@hw-layout/shared";
 import { CanvasStage, type SelectionRect } from "./components/CanvasStage.js";
@@ -26,7 +27,7 @@ import { useGlyphImages } from "./components/GlyphText.js";
 import { useConnection } from "./lib/useConnection.js";
 import { useHandwriting } from "./lib/useHandwriting.js";
 import { useHistory } from "./lib/useHistory.js";
-import { ApiError, cleanRegion, detectGlyphCandidates } from "./lib/apiClient.js";
+import { ApiError, cleanRegion, detectGlyphCandidates, getOcrStatus, suggestGlyphLabels } from "./lib/apiClient.js";
 import { exportPagesToPDF, exportSinglePageToPDF, type PdfCompression } from "./lib/pdfExport.js";
 import { exportPagesToZip } from "./lib/zipExport.js";
 import {
@@ -78,6 +79,9 @@ export default function App() {
   const [segSaving, setSegSaving] = useState(false);
   const [segError, setSegError] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState<OcrResultResponse | null>(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   const { status, apiBase, updateApiBase, reconnect } = useConnection();
 
@@ -113,6 +117,25 @@ export default function App() {
   // ===== 文本撤销栈（每页独立） =====
   const history = useHistory();
 
+  // 后端连接后查询 OCR 状态
+  useEffect(() => {
+    if (status.kind === "connected") {
+      void getOcrStatus().then(setOcrStatus).catch(() => setOcrStatus(null));
+    }
+  }, [status.kind]);
+
+  // 未保存提示：刷新/关闭页面
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast((cur) => (cur === msg ? null : cur)), 2200);
@@ -126,6 +149,7 @@ export default function App() {
         updatedAt: nowISO(),
         pages: p.pages.map((pg) => (pg.id === pageId ? updater(pg) : pg)),
       }));
+      setDirty(true);
     },
     [],
   );
@@ -133,6 +157,7 @@ export default function App() {
   const touchProject = useCallback(
     (fn: (p: CanvasProject) => CanvasProject) => {
       setProject((p) => ({ ...fn(p), updatedAt: nowISO() }));
+      setDirty(true);
     },
     [],
   );
@@ -689,6 +714,7 @@ export default function App() {
   const handleSaveProject = useCallback(() => {
     const json = serializeProject(project);
     downloadText(json, exportFilename("json"), "application/json");
+    setDirty(false);
     showToast("已保存项目 JSON");
   }, [project, showToast]);
 
@@ -720,6 +746,7 @@ export default function App() {
       setSelectedId(null);
       setCleanError(null);
       exportSeedRef.current = randomSeed();
+      setDirty(false);
       const migrated = loaded.pages.length === 1 && !result.project.appVersion.startsWith("0.5");
       showToast(migrated ? "已加载项目（旧版已迁移为多页）" : "已加载项目");
     } catch (err) {
@@ -823,6 +850,31 @@ export default function App() {
     [],
   );
 
+  // OCR 辅助：对候选框批量识别
+  const handleSuggestLabels = useCallback(
+    async (
+      sampleDataURL: string,
+      cands: { x: number; y: number; width: number; height: number }[],
+    ): Promise<OcrResultResponse> => {
+      setOcrLoading(true);
+      setSegError(null);
+      try {
+        const { data, mime } = splitDataURL(sampleDataURL);
+        return await suggestGlyphLabels({
+          image: data,
+          mime,
+          candidates: cands.map((c) => ({ x: Math.round(c.x), y: Math.round(c.y), width: Math.round(c.width), height: Math.round(c.height) })),
+        });
+      } catch (err) {
+        setSegError(describeError(err));
+        return { candidates: [], provider: "none", status: "error", message: describeError(err) };
+      } finally {
+        setOcrLoading(false);
+      }
+    },
+    [],
+  );
+
   const segmenterProfile = useMemo<HandwritingProfile | null>(
     () =>
       segmenterTarget
@@ -856,7 +908,10 @@ export default function App() {
   return (
     <div className="app">
       <header className="app__header">
-        <span>📝 {project.name}</span>
+        <span>
+          📝 {project.name}
+          {dirty && <span className="dirty-dot" title="有未保存的修改">●</span>}
+        </span>
         <ConnectionBadge status={status} apiBase={apiBase} onReconnect={reconnect} onApiBaseChange={updateApiBase} />
         <div className="header-tools" style={{ marginLeft: 8 }}>
           <button className="btn" onClick={handleLoadProject} title="加载项目 JSON">加载</button>
@@ -991,6 +1046,9 @@ export default function App() {
           onClose={handleCloseSegmenter}
           onDetect={handleDetect}
           detecting={detecting}
+          onSuggestLabels={handleSuggestLabels}
+          ocrStatus={ocrStatus}
+          ocrLoading={ocrLoading}
         />
       )}
     </div>

@@ -7,8 +7,9 @@ import type {
   GlyphQualityLevel,
   HandwritingProfile,
   HandwritingSampleSet,
+  OcrResultResponse,
 } from "@hw-layout/shared";
-import { assessGlyphQuality } from "@hw-layout/shared";
+import { assessGlyphQuality, classifyConfidence } from "@hw-layout/shared";
 
 /** 候选框（可来自自动检测或手动新增）。 */
 interface CandBox {
@@ -19,6 +20,19 @@ interface CandBox {
   height: number;
   rowIndex: number;
   orderIndex: number;
+}
+
+/** 候选框的 OCR 建议。 */
+interface CandOcr {
+  char: string;
+  confidence: number;
+  level: "high" | "medium" | "low";
+  provider: string;
+}
+
+/** 候选框的字符标注（用户输入或 OCR 应用）。 */
+interface CandLabel {
+  char: string;
 }
 
 interface GlyphSegmenterProps {
@@ -35,14 +49,25 @@ interface GlyphSegmenterProps {
   onClose: () => void;
   onDetect: (sampleDataURL: string) => Promise<GlyphCandidate[]>;
   detecting: boolean;
+  /** OCR 辅助：对候选框批量识别 */
+  onSuggestLabels: (
+    sampleDataURL: string,
+    cands: CandBox[],
+  ) => Promise<OcrResultResponse>;
+  /** OCR 状态 */
+  ocrStatus: OcrResultResponse | null;
+  ocrLoading: boolean;
 }
 
 /**
  * 字形切割器：
  * - 手动框选 + 自动检测候选框
+ * - OCR 辅助识别（高置信度可一键应用，中低不自动）
  * - 候选框可删除/调整/新增
- * - 单个保存 / 批量标注（按 orderIndex 顺序匹配字符）
+ * - 键盘导航（←/→ 切换、Enter 保存、Delete 删除）
+ * - 单个保存 / 批量标注（含 OCR 建议保存 + 摘要）
  * - glyph 列表 + 搜索 + 删除 + 质量提示
+ * - 过滤：只显示未标注 / 只显示低置信度
  */
 export function GlyphSegmenter({
   profile,
@@ -56,17 +81,26 @@ export function GlyphSegmenter({
   onClose,
   onDetect,
   detecting,
+  onSuggestLabels,
+  ocrStatus,
+  ocrLoading,
 }: GlyphSegmenterProps) {
   const stageRef = useRef<Konva.Stage>(null);
   const [cands, setCands] = useState<CandBox[]>([]);
+  const [candLabels, setCandLabels] = useState<Map<string, CandLabel>>(new Map());
+  const [candOcr, setCandOcr] = useState<Map<string, CandOcr>>(new Map());
   const [selectedCandId, setSelectedCandId] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const startRef = useRef<{ x: number; y: number } | null>(null);
-
-  const [char, setChar] = useState("");
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [filterUnlabeled, setFilterUnlabeled] = useState(false);
+  const [filterLowConf, setFilterLowConf] = useState(false);
   const [batchText, setBatchText] = useState("");
   const [batchMsg, setBatchMsg] = useState<string | null>(null);
+  const [saveSummary, setSaveSummary] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+
+  const ocrAvailable = ocrStatus?.status === "ok";
 
   const MAX_DISPLAY = 720;
   const scale = image ? Math.min(1, MAX_DISPLAY / image.naturalWidth) : 1;
@@ -79,13 +113,19 @@ export function GlyphSegmenter({
     width: b.width * scale,
     height: b.height * scale,
   });
+  const toOriginal = (d: { x: number; y: number; w: number; h: number }): GlyphBoundingBox => ({
+    x: Math.round(d.x / scale),
+    y: Math.round(d.y / scale),
+    width: Math.round(d.w / scale),
+    height: Math.round(d.h / scale),
+  });
+  const activeDraftBbox = draft && draft.w >= 6 && draft.h >= 6 ? toOriginal(draft) : null;
 
-  // 空白处拖拽 = 新增候选框
+  // ===== 鼠标交互 =====
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = e.target.getStage();
     const pos = stage?.getPointerPosition();
     if (!pos) return;
-    // 点中已有候选框则选中
     if (e.target !== e.target.getStage() && e.target.id()?.startsWith("cand-")) {
       setSelectedCandId(e.target.id().replace("cand-", ""));
       return;
@@ -108,7 +148,6 @@ export function GlyphSegmenter({
   };
   const onMouseUp = () => {
     if (draft && draft.w >= 6 && draft.h >= 6) {
-      // 新增候选框
       const newCand: CandBox = {
         id: `c-${Date.now()}`,
         x: Math.round(draft.x / scale),
@@ -125,30 +164,19 @@ export function GlyphSegmenter({
     startRef.current = null;
   };
 
-  const toOriginal = (d: { x: number; y: number; w: number; h: number }): GlyphBoundingBox => ({
-    x: Math.round(d.x / scale),
-    y: Math.round(d.y / scale),
-    width: Math.round(d.w / scale),
-    height: Math.round(d.h / scale),
-  });
-  // 当选中候选框但用户也想用手动 draft 时，draft 优先
-  const activeDraftBbox = draft && draft.w >= 6 && draft.h >= 6 ? toOriginal(draft) : null;
-
-  // 自动检测
+  // ===== 自动检测 =====
   const handleDetect = async () => {
     try {
       const result = await onDetect(sampleSet.imageBase64);
       setCands(
         result.map((c, i) => ({
           id: `d-${i}-${Date.now()}`,
-          x: c.x,
-          y: c.y,
-          width: c.width,
-          height: c.height,
-          rowIndex: c.rowIndex,
-          orderIndex: c.orderIndex,
+          x: c.x, y: c.y, width: c.width, height: c.height,
+          rowIndex: c.rowIndex, orderIndex: c.orderIndex,
         })),
       );
+      setCandLabels(new Map());
+      setCandOcr(new Map());
       setSelectedCandId(null);
       setBatchMsg(null);
     } catch {
@@ -156,98 +184,213 @@ export function GlyphSegmenter({
     }
   };
 
-  // 保存选中候选框对应字符（若有手动 draft 则优先用 draft）
-  const handleSaveSelected = async () => {
-    if (!char.trim()) return;
-    if (activeDraftBbox) {
-      await onSaveGlyph(char, activeDraftBbox);
-      setDraft(null);
-      setChar("");
-      return;
-    }
-    const c = cands.find((x) => x.id === selectedCandId);
-    if (!c) return;
-    await onSaveGlyph(char, { x: c.x, y: c.y, width: c.width, height: c.height });
-    // 保存后移除该候选框
-    setCands((prev) => prev.filter((x) => x.id !== c.id));
-    setChar("");
-    setSelectedCandId(null);
-  };
-
-  // 批量标注：按 orderIndex 顺序匹配字符
-  const handleBatchSave = async () => {
-    const chars = Array.from(batchText);
-    if (chars.length === 0) return;
-    // 按 rowIndex, orderIndex 排序
+  // ===== OCR 辅助识别 =====
+  const handleOcrSuggest = async () => {
+    if (cands.length === 0) return;
+    const res = await onSuggestLabels(sampleSet.imageBase64, cands);
+    if (res.status !== "ok") return;
     const sorted = [...cands].sort(
       (a, b) => a.rowIndex - b.rowIndex || a.orderIndex - b.orderIndex,
     );
-    const items: { char: string; bbox: GlyphBoundingBox }[] = [];
-    for (let i = 0; i < sorted.length && i < chars.length; i++) {
-      const ch = chars[i].trim();
-      if (!ch) continue;
-      items.push({
-        char: ch,
-        bbox: { x: sorted[i].x, y: sorted[i].y, width: sorted[i].width, height: sorted[i].height },
-      });
+    const newOcr = new Map<string, CandOcr>();
+    res.candidates.forEach((c, i) => {
+      const cand = sorted[i];
+      if (cand) {
+        newOcr.set(cand.id, {
+          char: c.text,
+          confidence: c.confidence,
+          level: classifyConfidence(c.confidence),
+          provider: c.provider,
+        });
+      }
+    });
+    setCandOcr(newOcr);
+    setBatchMsg(`OCR 返回 ${res.candidates.length} 个建议（高置信度可一键应用）`);
+  };
+
+  // 应用高置信度建议（>=0.85）
+  const handleApplyHighConf = () => {
+    const newLabels = new Map(candLabels);
+    let count = 0;
+    for (const [id, ocr] of candOcr) {
+      if (ocr.level === "high" && ocr.char) {
+        newLabels.set(id, { char: ocr.char });
+        count++;
+      }
     }
-    const result = await onBatchSaveGlyphs(items);
-    // 移除已处理的候选框
-    const usedIds = new Set(sorted.slice(0, items.length).map((c) => c.id));
-    setCands((prev) => prev.filter((c) => !usedIds.has(c.id)));
-    const leftover = chars.length - sorted.length;
-    setBatchMsg(
-      `已保存 ${result.saved} 个${result.skipped > 0 ? `，跳过 ${result.skipped} 个` : ""}` +
-        (leftover > 0 ? `；多余 ${leftover} 个字符未使用` : ""),
+    setCandLabels(newLabels);
+    setBatchMsg(`已应用 ${count} 个高置信度建议`);
+  };
+
+  const clearOcr = () => {
+    setCandOcr(new Map());
+    setBatchMsg(null);
+  };
+
+  // ===== 标签操作 =====
+  const setLabel = (id: string, char: string) => {
+    setCandLabels((prev) => {
+      const next = new Map(prev);
+      if (char) next.set(id, { char });
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const handleSaveSelected = async () => {
+    const c = cands.find((x) => x.id === selectedCandId);
+    const label = selectedCandId ? candLabels.get(selectedCandId)?.char : "";
+    const char = label || "";
+    if (activeDraftBbox && char) {
+      await onSaveGlyph(char, activeDraftBbox);
+      setDraft(null);
+      return;
+    }
+    if (!c || !char) return;
+    await onSaveGlyph(char, { x: c.x, y: c.y, width: c.width, height: c.height });
+    setCands((prev) => prev.filter((x) => x.id !== c.id));
+    setCandLabels((prev) => {
+      const next = new Map(prev);
+      next.delete(c.id);
+      return next;
+    });
+    // 自动跳到下一个
+    if (autoAdvance) {
+      const idx = cands.findIndex((x) => x.id === c.id);
+      const next = cands[idx + 1];
+      if (next) setSelectedCandId(next.id);
+    }
+  };
+
+  // ===== 批量保存（含 OCR 建议或手动批量文本）=====
+  const handleBatchSave = async () => {
+    const sorted = [...cands].sort(
+      (a, b) => a.rowIndex - b.rowIndex || a.orderIndex - b.orderIndex,
     );
+    // 优先用 batchText，否则用各候选的 label
+    const items: { char: string; bbox: GlyphBoundingBox }[] = [];
+    let emptyCount = 0;
+    let lowConfCount = 0;
+    if (batchText.trim()) {
+      const chars = Array.from(batchText);
+      for (let i = 0; i < sorted.length && i < chars.length; i++) {
+        const ch = chars[i].trim();
+        if (!ch) {
+          emptyCount++;
+          continue;
+        }
+        items.push({ char: ch, bbox: { x: sorted[i].x, y: sorted[i].y, width: sorted[i].width, height: sorted[i].height } });
+      }
+    } else {
+      for (const c of sorted) {
+        const label = candLabels.get(c.id)?.char ?? "";
+        const ocr = candOcr.get(c.id);
+        if (!label) {
+          emptyCount++;
+          continue;
+        }
+        if (ocr && ocr.level === "low") lowConfCount++;
+        items.push({ char: label, bbox: { x: c.x, y: c.y, width: c.width, height: c.height } });
+      }
+    }
+
+    if (items.length === 0) {
+      setSaveSummary("没有可保存的字符（全部为空）");
+      return;
+    }
+    // 保存前摘要
+    const summary = `将保存 ${items.length} 个字形\n空字符：${emptyCount}\n低置信度：${lowConfCount}`;
+    if (!window.confirm(`${summary}\n\n是否继续？`)) return;
+
+    const result = await onBatchSaveGlyphs(items);
+    // 移除已保存
+    const usedIds = new Set(sorted.slice(0, items.length + emptyCount).map((c) => c.id));
+    setCands((prev) => prev.filter((c) => !usedIds.has(c.id)));
+    setSaveSummary(`保存成功 ${result.saved} 个${result.skipped > 0 ? `，跳过 ${result.skipped}` : ""}`);
     setBatchText("");
   };
 
   const handleDeleteCand = (id: string) => {
     setCands((prev) => prev.filter((c) => c.id !== id));
+    setCandLabels((prev) => {
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+    setCandOcr((prev) => {
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
     if (selectedCandId === id) setSelectedCandId(null);
   };
 
-  // 候选框质量评估（仅几何）
+  // 键盘导航
+  const navCand = (dir: -1 | 1) => {
+    if (cands.length === 0) return;
+    const sorted = [...cands].sort(
+      (a, b) => a.rowIndex - b.rowIndex || a.orderIndex - b.orderIndex,
+    );
+    const curIdx = sorted.findIndex((c) => c.id === selectedCandId);
+    const nextIdx = curIdx < 0 ? 0 : Math.max(0, Math.min(sorted.length - 1, curIdx + dir));
+    setSelectedCandId(sorted[nextIdx].id);
+  };
+
+  // 候选框质量
   const candQuality = useMemo(() => {
     const map = new Map<string, GlyphQualityLevel>();
     for (const c of cands) {
-      const q = assessGlyphQuality({
-        char: "?",
-        bbox: { x: c.x, y: c.y, width: c.width, height: c.height },
-        variantCount: 0,
-      });
+      const q = assessGlyphQuality({ char: "?", bbox: { x: c.x, y: c.y, width: c.width, height: c.height } });
       map.set(c.id, q.level);
     }
     return map;
   }, [cands]);
 
-  // glyph 列表（带搜索）
+  // 过滤显示的候选框列表
+  const sortedCands = useMemo(
+    () => [...cands].sort((a, b) => a.rowIndex - b.rowIndex || a.orderIndex - b.orderIndex),
+    [cands],
+  );
+  const filteredListCands = useMemo(() => {
+    return sortedCands.filter((c) => {
+      if (filterUnlabeled && candLabels.has(c.id)) return false;
+      if (filterLowConf) {
+        const ocr = candOcr.get(c.id);
+        if (!ocr || ocr.level !== "low") return false;
+      }
+      return true;
+    });
+  }, [sortedCands, filterUnlabeled, filterLowConf, candLabels, candOcr]);
+
   const filteredGlyphs = useMemo(() => {
     const q = query.trim();
     if (!q) return profile.glyphs;
     return profile.glyphs.filter((g) => g.char.includes(q));
   }, [profile.glyphs, query]);
 
+  // 键盘事件
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") { onClose(); return; }
+      if (isEditableTarget(e.target)) return;
+      if (e.key === "ArrowLeft") { e.preventDefault(); navCand(-1); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); navCand(1); }
+      else if (e.key === "Enter" && selectedCandId) { e.preventDefault(); void handleSaveSelected(); }
+      else if (e.key === "Delete" && selectedCandId) { e.preventDefault(); handleDeleteCand(selectedCandId); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  });
+
+  const selectedLabel = selectedCandId ? candLabels.get(selectedCandId)?.char ?? "" : "";
+  const selectedOcr = selectedCandId ? candOcr.get(selectedCandId) : undefined;
 
   return (
     <div className="seg-overlay">
       <div className="seg-modal">
         <div className="seg-modal__head">
-          <span>
-            切割字形 — {profile.name} / {sampleSet.name}
-            （候选 {cands.length}）
-          </span>
-          <button className="btn btn--xs" onClick={onClose}>
-            ✕ 关闭 (Esc)
-          </button>
+          <span>切割字形 — {profile.name} / {sampleSet.name}（候选 {cands.length}）</span>
+          <button className="btn btn--xs" onClick={onClose}>✕ 关闭 (Esc)</button>
         </div>
 
         <div className="seg-modal__body">
@@ -268,74 +411,45 @@ export function GlyphSegmenter({
                     const d = toDisplay(c);
                     const isSel = c.id === selectedCandId;
                     const lvl = candQuality.get(c.id) ?? "good";
-                    const color =
-                      lvl === "poor" ? "#c00" : lvl === "warning" ? "#e0a800" : "#2f6df6";
+                    const ocr = candOcr.get(c.id);
+                    const label = candLabels.get(c.id)?.char;
+                    const color = lvl === "poor" ? "#c00" : lvl === "warning" ? "#e0a800" : "#2f6df6";
+                    const ocrColor = ocr?.level === "high" ? "#1aa260" : ocr?.level === "medium" ? "#e0a800" : "#999";
                     return (
                       <Group key={c.id}>
                         <Rect
                           id={`cand-${c.id}`}
-                          x={d.x}
-                          y={d.y}
-                          width={d.width}
-                          height={d.height}
+                          x={d.x} y={d.y} width={d.width} height={d.height}
                           stroke={isSel ? "#1aa260" : color}
                           strokeWidth={isSel ? 2 : 1.2}
                           dash={isSel ? [] : [4, 3]}
                           fill={isSel ? "rgba(26,162,96,0.12)" : "rgba(47,109,246,0.05)"}
                           draggable
                           onDragEnd={(e) => {
-                            const nx = e.target.x() / scale;
-                            const ny = e.target.y() / scale;
-                            setCands((prev) =>
-                              prev.map((cc) =>
-                                cc.id === c.id ? { ...cc, x: nx, y: ny } : cc,
-                              ),
-                            );
+                            setCands((prev) => prev.map((cc) => cc.id === c.id ? { ...cc, x: e.target.x() / scale, y: e.target.y() / scale } : cc));
                           }}
                           onTransformEnd={(e) => {
                             const node = e.target as Konva.Rect;
-                            const sx = node.scaleX();
-                            const sy = node.scaleY();
-                            setCands((prev) =>
-                              prev.map((cc) =>
-                                cc.id === c.id
-                                  ? {
-                                      ...cc,
-                                      x: node.x() / scale,
-                                      y: node.y() / scale,
-                                      width: Math.max(4, cc.width * sx),
-                                      height: Math.max(4, cc.height * sy),
-                                    }
-                                  : cc,
-                              ),
-                            );
-                            node.scaleX(1);
-                            node.scaleY(1);
+                            const sx = node.scaleX(); const sy = node.scaleY();
+                            setCands((prev) => prev.map((cc) => cc.id === c.id ? { ...cc, x: node.x() / scale, y: node.y() / scale, width: Math.max(4, cc.width * sx), height: Math.max(4, cc.height * sy) } : cc));
+                            node.scaleX(1); node.scaleY(1);
                           }}
                         />
                         <Label x={d.x} y={d.y - 16} listening={false}>
-                          <Tag fill={color} cornerRadius={3} />
-                          <Text
-                            text={`${c.orderIndex}`}
-                            fill="#fff"
-                            fontSize={11}
-                            padding={2}
-                          />
+                          <Tag fill={label ? "#1aa260" : color} cornerRadius={3} />
+                          <Text text={`${c.orderIndex}${label ? `:${label}` : ""}`} fill="#fff" fontSize={11} padding={2} />
                         </Label>
+                        {ocr && (
+                          <Label x={d.x + d.width - 30} y={d.y - 16} listening={false}>
+                            <Tag fill={ocrColor} cornerRadius={3} />
+                            <Text text={`${Math.round(ocr.confidence * 100)}%`} fill="#fff" fontSize={10} padding={2} />
+                          </Label>
+                        )}
                       </Group>
                     );
                   })}
                   {draft && draft.w > 0 && draft.h > 0 && (
-                    <Rect
-                      x={draft.x}
-                      y={draft.y}
-                      width={draft.w}
-                      height={draft.h}
-                      stroke="#1aa260"
-                      strokeWidth={1.5}
-                      dash={[4, 4]}
-                      fill="rgba(26,162,96,0.1)"
-                    />
+                    <Rect x={draft.x} y={draft.y} width={draft.w} height={draft.h} stroke="#1aa260" strokeWidth={1.5} dash={[4, 4]} fill="rgba(26,162,96,0.1)" />
                   )}
                 </Layer>
               </Stage>
@@ -343,133 +457,128 @@ export function GlyphSegmenter({
               <div className="hint">样本图加载中…</div>
             )}
             <p className="hint" style={{ marginTop: 6 }}>
-              空白处拖拽 = 新增候选；点候选框选中后拖拽/缩放调整；颜色：蓝=good 黄=warning 红=poor
+              ← →切换 · Enter保存 · Delete删除 · 空白处拖拽新增候选
             </p>
           </div>
 
           <div className="seg-side">
             <div className="seg-detect">
-              <button
-                className="btn btn--primary"
-                style={{ width: "100%", marginBottom: 6 }}
-                disabled={!image || detecting}
-                onClick={handleDetect}
-              >
+              <button className="btn btn--primary" style={{ width: "100%", marginBottom: 6 }} disabled={!image || detecting} onClick={handleDetect}>
                 {detecting ? "检测中…" : "🔍 自动检测字形区域"}
               </button>
-              <button
-                className="btn"
-                style={{ width: "100%", marginBottom: 6 }}
-                disabled={cands.length === 0}
-                onClick={() => setCands([])}
-              >
+              <button className="btn" style={{ width: "100%", marginBottom: 6 }} disabled={cands.length === 0} onClick={() => setCands([])}>
                 清空候选框
               </button>
-              {cands.length > 0 && (
-                <div className="cand-list">
-                  <div className="hint" style={{ marginBottom: 4 }}>
-                    候选框（点击选中，✕ 删除）
-                  </div>
-                  <div className="cand-list__items">
-                    {[...cands]
-                      .sort((a, b) => a.rowIndex - b.rowIndex || a.orderIndex - b.orderIndex)
-                      .map((c) => {
-                        const lvl = candQuality.get(c.id) ?? "good";
-                        const dot =
-                          lvl === "poor" ? "●" : lvl === "warning" ? "●" : "●";
-                        const color =
-                          lvl === "poor" ? "#c00" : lvl === "warning" ? "#e0a800" : "#2f6df6";
-                        return (
-                          <span
-                            key={c.id}
-                            className={`cand-chip ${c.id === selectedCandId ? "is-active" : ""}`}
-                            onClick={() => setSelectedCandId(c.id)}
-                          >
-                            <span style={{ color }}>{dot}</span>
-                            {c.orderIndex}
-                            <button
-                              className="btn btn--xs"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteCand(c.id);
-                              }}
-                            >
-                              ✕
-                            </button>
-                          </span>
-                        );
-                      })}
-                  </div>
-                </div>
+              <button className="btn" style={{ width: "100%", marginBottom: 6 }} disabled={!ocrAvailable || cands.length === 0 || ocrLoading} onClick={handleOcrSuggest} title={ocrAvailable ? "对候选框逐个 OCR" : "OCR 未启用"}>
+                {ocrLoading ? "OCR 识别中…" : "🔤 OCR 辅助识别"}
+              </button>
+              {ocrAvailable && candOcr.size > 0 && (
+                <>
+                  <button className="btn" style={{ width: "100%", marginBottom: 6 }} onClick={handleApplyHighConf}>
+                    ✅ 应用高置信度建议
+                  </button>
+                  <button className="btn" style={{ width: "100%", marginBottom: 6 }} onClick={clearOcr}>
+                    清空 OCR 建议
+                  </button>
+                </>
+              )}
+              {!ocrAvailable && (
+                <p className="hint" style={{ marginTop: 4 }}>
+                  OCR 未启用，可继续手动标注。{ocrStatus?.message ?? "可安装 rapidocr-onnxruntime 启用。"}
+                </p>
               )}
             </div>
 
             <div className="seg-save">
               <div className="field">
-                <label>选中候选框的字符（{selectedCandId ? "已选" : "未选"}）</label>
+                <label>
+                  当前候选（{selectedCandId ? `${selectedCandId.slice(0, 8)}` : "未选"}）
+                  {selectedOcr && (
+                    <span style={{ marginLeft: 6, color: selectedOcr.level === "high" ? "#1aa260" : selectedOcr.level === "medium" ? "#e0a800" : "#999" }}>
+                      OCR: {selectedOcr.char || "空"} ({Math.round(selectedOcr.confidence * 100)}%)
+                    </span>
+                  )}
+                </label>
                 <input
                   type="text"
-                  value={char}
-                  onChange={(e) => setChar(e.target.value)}
-                  placeholder="选中候选框后输入字"
+                  value={selectedLabel}
+                  onChange={(e) => selectedCandId && setLabel(selectedCandId, e.target.value)}
+                  placeholder="输入字符"
                   maxLength={4}
+                  autoFocus
                 />
               </div>
-              <button
-                className="btn btn--primary"
-                style={{ width: "100%" }}
-                disabled={!selectedCandId || !char.trim() || saving}
-                onClick={handleSaveSelected}
-              >
-                {saving ? "保存中…" : "保存选中"}
+              <label className="toggle" style={{ marginBottom: 8 }}>
+                <input type="checkbox" checked={autoAdvance} onChange={(e) => setAutoAdvance(e.target.checked)} />
+                保存后自动跳下一个
+              </label>
+              <button className="btn btn--primary" style={{ width: "100%" }} disabled={!selectedCandId || !selectedLabel || saving} onClick={handleSaveSelected}>
+                {saving ? "保存中…" : "保存选中 (Enter)"}
               </button>
 
               <div className="field" style={{ marginTop: 10 }}>
-                <label>批量标注（按阅读顺序逐字匹配候选框）</label>
-                <textarea
-                  value={batchText}
-                  onChange={(e) => setBatchText(e.target.value)}
-                  placeholder="如：的一是在不了有和人这中大"
-                  rows={2}
-                />
+                <label>批量标注（按阅读顺序匹配）</label>
+                <textarea value={batchText} onChange={(e) => setBatchText(e.target.value)} placeholder="如：的一是在不了有" rows={2} />
               </div>
-              <button
-                className="btn"
-                style={{ width: "100%" }}
-                disabled={cands.length === 0 || !batchText.trim() || saving}
-                onClick={handleBatchSave}
-              >
-                批量保存 ({cands.length} 候选)
+              <button className="btn" style={{ width: "100%" }} disabled={cands.length === 0 || saving} onClick={handleBatchSave}>
+                批量保存（用上方文本或各候选标签）
               </button>
               {batchMsg && <p className="hint" style={{ marginTop: 6 }}>{batchMsg}</p>}
+              {saveSummary && <p className="hint" style={{ marginTop: 6, whiteSpace: "pre-line" }}>{saveSummary}</p>}
             </div>
 
             {error && <p className="err-msg">{error}</p>}
 
             <div className="seg-glyphs">
               <div className="field">
+                <label>候选框（{cands.length}）</label>
+                <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+                  <label className="toggle" style={{ fontSize: 11 }}>
+                    <input type="checkbox" checked={filterUnlabeled} onChange={(e) => setFilterUnlabeled(e.target.checked)} />
+                    未标注
+                  </label>
+                  <label className="toggle" style={{ fontSize: 11 }}>
+                    <input type="checkbox" checked={filterLowConf} onChange={(e) => setFilterLowConf(e.target.checked)} />
+                    低置信度
+                  </label>
+                </div>
+              </div>
+              <div className="cand-list__items">
+                {filteredListCands.map((c) => {
+                  const lvl = candQuality.get(c.id) ?? "good";
+                  const ocr = candOcr.get(c.id);
+                  const label = candLabels.get(c.id)?.char;
+                  const color = lvl === "poor" ? "#c00" : lvl === "warning" ? "#e0a800" : "#2f6df6";
+                  return (
+                    <span
+                      key={c.id}
+                      className={`cand-chip ${c.id === selectedCandId ? "is-active" : ""}`}
+                      onClick={() => setSelectedCandId(c.id)}
+                    >
+                      <span style={{ color }}>{label ? "✓" : "●"}</span>
+                      {c.orderIndex}
+                      {label ? `:${label}` : ""}
+                      {ocr && <span style={{ color: ocr.level === "high" ? "#1aa260" : ocr.level === "medium" ? "#e0a800" : "#999", fontSize: 10 }}>{Math.round(ocr.confidence * 100)}%</span>}
+                      <button className="btn btn--xs" onClick={(e) => { e.stopPropagation(); handleDeleteCand(c.id); }}>✕</button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="seg-glyphs">
+              <div className="field">
                 <label>已保存字形（{profile.glyphs.length}）</label>
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="按字符搜索"
-                />
+                <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="按字符搜索" />
               </div>
               <div className="seg-glyph-grid">
-                {filteredGlyphs.length === 0 && (
-                  <span className="hint">暂无字形</span>
-                )}
+                {filteredGlyphs.length === 0 && <span className="hint">暂无字形</span>}
                 {filteredGlyphs.map((g) => (
                   <div key={g.id} className="seg-glyph-cell" title={`${g.char} #${g.variantIndex}`}>
                     <img src={g.imageBase64} alt={g.char} />
                     <div className="seg-glyph-cell__bar">
-                      <span>
-                        {g.char}#{g.variantIndex}
-                      </span>
-                      <button className="btn btn--xs" onClick={() => onDeleteGlyph(g.id)}>
-                        ✕
-                      </button>
+                      <span>{g.char}#{g.variantIndex}</span>
+                      <button className="btn btn--xs" onClick={() => onDeleteGlyph(g.id)}>✕</button>
                     </div>
                   </div>
                 ))}
@@ -480,4 +589,11 @@ export function GlyphSegmenter({
       </div>
     </div>
   );
+}
+
+function isEditableTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
 }

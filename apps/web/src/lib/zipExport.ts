@@ -1,7 +1,8 @@
 /**
  * 批量导出全部页面为 PNG ZIP。
+ *
+ * 第七轮起：jszip 改为动态导入，降低主包体积。
  */
-import JSZip from "jszip";
 import type { CanvasPage, HandwritingProfile, NaturalnessParams } from "@hw-layout/shared";
 import { downloadURL, exportFilename } from "./image.js";
 import { renderPageToDataURL, preloadPageGlyphs, type GlyphImageStore } from "./offscreenRender.js";
@@ -26,6 +27,8 @@ export async function exportPagesToZip(
   opts: ZipExportOptions,
 ): Promise<void> {
   if (pages.length === 0) return;
+  // 动态导入 jszip，仅在导出时加载
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const baseName = exportFilename("pages").replace(/\.pages$/, "");
 

@@ -1,9 +1,9 @@
 /**
  * PDF 导出工具：用 jsPDF 把 canvas dataURL 组合成 PDF。
  *
+ * 第七轮起：jspdf 改为动态导入，降低主包体积。
  * 每页按原图比例放置。压缩质量可选。
  */
-import { jsPDF } from "jspdf";
 import { downloadURL, exportFilename } from "./image.js";
 
 /** PDF 图片压缩质量。 */
@@ -21,11 +21,13 @@ export interface PdfPageInput {
  * @param pages 每页的 dataURL + 像素宽高
  * @param compression 图片压缩质量
  */
-export function exportPagesToPDF(
+export async function exportPagesToPDF(
   pages: PdfPageInput[],
   compression: PdfCompression = "FAST",
-): void {
+): Promise<void> {
   if (pages.length === 0) return;
+  // 动态导入 jspdf，仅在导出时加载
+  const { jsPDF } = await import("jspdf");
 
   const first = pages[0];
   const orientation = first.width >= first.height ? "landscape" : "portrait";
@@ -51,11 +53,12 @@ export function exportPagesToPDF(
 }
 
 /** 导出单页为 PDF。 */
-export function exportSinglePageToPDF(
+export async function exportSinglePageToPDF(
   dataURL: string,
   width: number,
   height: number,
   compression: PdfCompression = "FAST",
-): void {
-  exportPagesToPDF([{ dataURL, width, height }], compression);
+): Promise<void> {
+  await exportPagesToPDF([{ dataURL, width, height }], compression);
 }
+
