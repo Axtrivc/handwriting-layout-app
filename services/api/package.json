@@ -1,0 +1,11 @@
+{
+  "name": "@hw-layout/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FastAPI 后端（Python）。脚本通过 venv 启动。",
+  "scripts": {
+    "dev": "node ../../scripts/run-api.mjs",
+    "typecheck": "node ../../scripts/run-api.mjs --check",
+    "lint": "echo 'api: python lint 由 ruff 负责（待接入）' && exit 0"
+  }
+}

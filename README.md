@@ -28,21 +28,32 @@ handwriting-layout-app/
 
 ## 快速开始
 
+本项目使用 **pnpm workspace** 管理 monorepo。
+
+### 前置要求
+
+- Node.js >= 20
+- pnpm >= 10（`npm install -g pnpm` 或 `corepack enable`）
+- Python 3.11+（已在 3.14 验证）
+
+### 安装（根目录一次性安装所有前端依赖）
+
+```bash
+pnpm install
+```
+
 ### 前端（apps/web）
 
 ```bash
-cd apps/web
-npm install
-npm run dev        # 开发模式
-npm run build      # 类型检查 + 构建
+pnpm dev:web       # 开发模式，http://127.0.0.1:5173
+pnpm build:web     # 类型检查 + 构建
 ```
 
 ### 桌面（apps/desktop）
 
 ```bash
-cd apps/desktop
-npm install
-npm run dev        # 启动 Electron，加载 apps/web 的开发服务器
+# 先启动 apps/web 的 dev server（上一条命令），再另开终端：
+pnpm dev:desktop   # 启动 Electron，加载 web 的开发服务器
 ```
 
 ### 后端（services/api）
@@ -50,12 +61,29 @@ npm run dev        # 启动 Electron，加载 apps/web 的开发服务器
 ```bash
 cd services/api
 python -m venv .venv
-. .venv/Scripts/activate    # Git Bash on Windows
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8001
+.venv/Scripts/python.exe -m pip install -r requirements.txt   # Git Bash on Windows
+.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8001
 ```
 
-健康检查：`GET http://127.0.0.1:8001/health`
+或用根目录脚本（自动定位 venv）：
+
+```bash
+pnpm dev:api
+```
+
+健康检查：`GET http://127.0.0.1:8001/health` → `{"status":"ok","version":"0.1.0"}`
+
+### 常用脚本
+
+| 命令 | 说明 |
+|------|------|
+| `pnpm install` | 安装所有 workspace 依赖 |
+| `pnpm typecheck` | 全量 TypeScript 类型检查 |
+| `pnpm lint` | ESLint 检查 |
+| `pnpm build` | 构建 shared + web + desktop |
+| `pnpm dev:web` | 启动前端 dev server |
+| `pnpm dev:desktop` | 启动 Electron |
+| `pnpm dev:api` | 启动 FastAPI（自动用 venv） |
 
 ## MVP 范围
 

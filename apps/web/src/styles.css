@@ -187,8 +187,93 @@ body {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
 
+.canvas-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.canvas-empty::after {
+  content: "请在左侧上传扫描稿图片";
+}
+
 .hint {
   font-size: 12px;
   color: var(--muted);
   line-height: 1.5;
+}
+
+/* 连接状态徽章 */
+.conn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.conn__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  background: #9b9ba6;
+}
+.conn__dot--connected {
+  background: #1aa260;
+}
+.conn__dot--connecting {
+  background: #e0a800;
+}
+.conn__dot--disconnected,
+.conn__dot--error {
+  background: #c00;
+}
+.conn__label {
+  color: var(--muted);
+}
+.conn__version {
+  color: var(--muted);
+  font-size: 11px;
+}
+.conn__err {
+  color: #c00;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn__edit {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.conn__edit input {
+  width: 180px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.btn--xs {
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+.err-msg {
+  font-size: 12px;
+  color: #c00;
+  background: #fdecec;
+  border: 1px solid #f5c6c6;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 8px 0;
+  line-height: 1.4;
+  max-height: 60px;
+  overflow: auto;
+  word-break: break-all;
 }

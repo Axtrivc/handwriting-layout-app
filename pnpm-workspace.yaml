@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# 允许以下依赖执行 install 脚本（下载平台二进制）
+onlyBuiltDependencies:
+  - electron
+  - esbuild

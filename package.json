@@ -2,17 +2,27 @@
   "name": "handwriting-layout-app",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "合规的本地桌面应用：个人笔记美化、扫描稿恢复、模板重排版、个人手写风格排版。",
-  "workspaces": [
-    "packages/shared",
-    "apps/web",
-    "apps/desktop"
-  ],
+  "packageManager": "pnpm@11.10.0",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build:shared": "echo \"shared is source-only, no build step\" && exit 0",
-    "build:web": "npm --workspace @hw-layout/web run build",
-    "typecheck:web": "npm --workspace @hw-layout/web run typecheck",
-    "typecheck:desktop": "npm --workspace @hw-layout/desktop run typecheck",
-    "typecheck": "npm run typecheck:web && npm run typecheck:desktop"
+    "install:all": "pnpm install && pnpm --filter @hw-layout/shared build",
+    "dev:web": "pnpm --filter @hw-layout/web dev",
+    "dev:desktop": "pnpm --filter @hw-layout/desktop dev",
+    "dev:api": "node scripts/run-api.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "build": "pnpm --filter @hw-layout/shared build && pnpm -r build",
+    "build:web": "pnpm --filter @hw-layout/shared build && pnpm --filter @hw-layout/web build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react": "^7.37.3",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "typescript-eslint": "^8.18.2"
   }
 }
