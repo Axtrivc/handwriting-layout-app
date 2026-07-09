@@ -1,4 +1,5 @@
 import type {
+  HandwritingProfile,
   TextAlign,
   TextObject,
 } from "@hw-layout/shared";
@@ -10,6 +11,8 @@ interface StylePanelProps {
   onDuplicate: (id: string) => void;
   onBringToFront: (id: string) => void;
   onSendToBack: (id: string) => void;
+  profiles: HandwritingProfile[];
+  activeProfileId: string | null;
 }
 
 /** 可选字体族（系统字体为主，避免引入外部字体包）。 */
@@ -30,6 +33,8 @@ export function StylePanel({
   onDuplicate,
   onBringToFront,
   onSendToBack,
+  profiles,
+  activeProfileId,
 }: StylePanelProps) {
   if (!selected) {
     return (
@@ -55,6 +60,52 @@ export function StylePanel({
           placeholder="输入文本（支持换行）"
         />
       </div>
+
+      <p className="panel__title">渲染模式</p>
+      <div className="seg" style={{ marginBottom: 8 }}>
+        <button
+          className={`seg__btn ${selected.renderMode === "font" ? "is-active" : ""}`}
+          onClick={() => onChange({ ...selected, renderMode: "font" })}
+          title="用系统字体渲染"
+        >
+          字体
+        </button>
+        <button
+          className={`seg__btn ${selected.renderMode === "handwritingGlyph" ? "is-active" : ""}`}
+          onClick={() =>
+            onChange({ ...selected, renderMode: "handwritingGlyph" })
+          }
+          title="优先用手写档案中的字形图片，缺字 fallback 字体"
+          disabled={profiles.length === 0}
+        >
+          手写素材
+        </button>
+      </div>
+      {selected.renderMode === "handwritingGlyph" && (
+        <div className="field">
+          <label>使用的手写档案（空=用项目活动档案）</label>
+          <select
+            value={selected.handwritingProfileId ?? ""}
+            onChange={(e) =>
+              onChange({
+                ...selected,
+                handwritingProfileId: e.target.value || null,
+              })
+            }
+          >
+            <option value="">（项目活动档案）</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.id === activeProfileId ? "（活动）" : ""}
+              </option>
+            ))}
+          </select>
+          <span className="hint">
+            覆盖字形：{coveredCharCount(selected.text, profiles, selected.handwritingProfileId, activeProfileId)} 字
+          </span>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
         <button className="btn" style={{ flex: 1 }} onClick={() => onDuplicate(selected.id)}>
@@ -206,4 +257,22 @@ export function StylePanel({
       </button>
     </aside>
   );
+}
+
+/** 统计文本中有多少字符在目标 profile 里有 glyph 覆盖。 */
+function coveredCharCount(
+  text: string,
+  profiles: HandwritingProfile[],
+  profileId: string | null,
+  activeProfileId: string | null,
+): number {
+  const pid = profileId ?? activeProfileId;
+  const prof = profiles.find((p) => p.id === pid);
+  if (!prof) return 0;
+  const covered = new Set(prof.glyphs.map((g) => g.char));
+  let n = 0;
+  for (const ch of text) {
+    if (ch !== " " && ch !== "\n" && covered.has(ch)) n++;
+  }
+  return n;
 }

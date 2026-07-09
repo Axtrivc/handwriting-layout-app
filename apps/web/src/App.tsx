@@ -1,12 +1,13 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type Konva from "konva";
 import {
-  APP_VERSION,
-  DEFAULT_NATURALNESS,
   DEFAULT_TEXT_STYLE,
+  createEmptyProject,
   deserializeProject,
   serializeProject,
   type CanvasProject,
+  type GlyphBoundingBox,
+  type HandwritingProfile,
   type NaturalnessParams,
   type TextObject,
 } from "@hw-layout/shared";
@@ -14,7 +15,11 @@ import { CanvasStage, type SelectionRect } from "./components/CanvasStage.js";
 import { LeftPanel } from "./components/LeftPanel.js";
 import { StylePanel } from "./components/StylePanel.js";
 import { ConnectionBadge } from "./components/ConnectionBadge.js";
+import { ProfileManager } from "./components/ProfileManager.js";
+import { GlyphSegmenter } from "./components/GlyphSegmenter.js";
+import { useGlyphImages } from "./components/GlyphText.js";
 import { useConnection } from "./lib/useConnection.js";
+import { useHandwriting } from "./lib/useHandwriting.js";
 import { ApiError, cleanRegion } from "./lib/apiClient.js";
 import {
   downloadText,
@@ -30,16 +35,16 @@ import {
   uid,
 } from "./lib/image.js";
 
+/** 手写切割器打开的目标（profileId + sampleSetId） */
+interface SegmenterTarget {
+  profileId: string;
+  sampleSetId: string;
+}
+
 export default function App() {
   const [project, setProject] = useState<CanvasProject>(() => ({
-    appVersion: APP_VERSION,
-    backgroundImage: null,
-    width: 900,
-    height: 600,
-    textObjects: [],
-    naturalnessEnabled: false,
-    naturalness: { ...DEFAULT_NATURALNESS },
-    cleanHistory: [],
+    ...createEmptyProject(),
+    // 保留兼容：createEmptyProject 已含所有字段
   }));
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -55,8 +60,30 @@ export default function App() {
   // 导出时隐藏 overlay
   const [exporting, setExporting] = useState(false);
 
+  // 手写切割器
+  const [segmenterTarget, setSegmenterTarget] = useState<SegmenterTarget | null>(null);
+  const [segmenterImage, setSegmenterImage] = useState<HTMLImageElement | null>(null);
+  const [segSaving, setSegSaving] = useState(false);
+  const [segError, setSegError] = useState<string | null>(null);
+
   // 后端连接状态
   const { status, apiBase, updateApiBase, reconnect } = useConnection();
+
+  // ===== 手写档案管理 =====
+  const hw = useHandwriting({
+    profiles: project.handwritingProfiles,
+    activeProfileId: project.activeHandwritingProfileId,
+    onProfilesChange: (profiles) =>
+      setProject((p) => ({ ...p, handwritingProfiles: profiles })),
+    onActiveChange: (id) =>
+      setProject((p) => ({ ...p, activeHandwritingProfileId: id })),
+  });
+
+  // 预加载活动 profile 的 glyph 图片
+  const glyphImages = useGlyphImages(
+    project.handwritingProfiles,
+    project.activeHandwritingProfileId,
+  );
 
   const selected = useMemo(
     () => project.textObjects.find((t) => t.id === selectedId) ?? null,
@@ -96,8 +123,7 @@ export default function App() {
 
   // ===== 文本对象操作 =====
   const nextZ = useCallback(
-    () =>
-      project.textObjects.reduce((m, t) => Math.max(m, t.zIndex), -1) + 1,
+    () => project.textObjects.reduce((m, t) => Math.max(m, t.zIndex), -1) + 1,
     [project.textObjects],
   );
 
@@ -111,6 +137,8 @@ export default function App() {
       style: { ...DEFAULT_TEXT_STYLE },
       zIndex: nextZ(),
       naturalnessSeed: randomSeed(),
+      renderMode: "font",
+      handwritingProfileId: null,
     };
     setProject((p) => ({ ...p, textObjects: [...p.textObjects, newObj] }));
     setSelectedId(newObj.id);
@@ -134,7 +162,6 @@ export default function App() {
     [selectedId],
   );
 
-  // 复制：偏移 16px，新 id 与新 seed
   const handleDuplicate = useCallback(
     (id: string) => {
       const src = project.textObjects.find((t) => t.id === id);
@@ -216,7 +243,6 @@ export default function App() {
     setCleanError(null);
   }, []);
 
-  // 撤销一次清除：恢复 cleanHistory 栈顶的 beforeImage
   const handleUndoClean = useCallback(() => {
     setProject((p) => {
       const last = p.cleanHistory[p.cleanHistory.length - 1];
@@ -229,7 +255,6 @@ export default function App() {
     showToast("已撤销最近一次清除");
   }, [applyBackground, showToast]);
 
-  // 清除字迹闭环
   const handleClearRegion = useCallback(async () => {
     const bg = project.backgroundImage;
     if (!bg || selections.length === 0) return;
@@ -250,7 +275,6 @@ export default function App() {
       const newDataURL = joinDataURL(resp.mime, resp.image);
       const beforeImage = bg;
       await applyBackground(newDataURL);
-      // 记录历史
       setProject((p) => ({
         ...p,
         cleanHistory: [
@@ -279,14 +303,12 @@ export default function App() {
   const canUndoClean = project.cleanHistory.length > 0;
 
   // ===== 导出 PNG =====
-  // 用固定 exportSeed，保证同一项目多次导出结果一致
   const exportSeedRef = useRef<number>(randomSeed());
   const handleExportPNG = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return;
     const prevSelected = selectedId;
     const prevSelectMode = selectMode;
-    // 临时进入导出态：取消选中、退出框选、隐藏 overlay、应用 naturalness
     setSelectedId(null);
     setSelectMode(false);
     setExporting(true);
@@ -294,7 +316,7 @@ export default function App() {
       requestAnimationFrame(() => {
         try {
           const dataURL = stage.toDataURL({
-            pixelRatio: 1 / stage.scaleX(), // 用原图像素分辨率，不被显示缩放降低
+            pixelRatio: 1 / stage.scaleX(),
             x: 0,
             y: 0,
             width: project.width,
@@ -340,7 +362,6 @@ export default function App() {
       setSelections([]);
       setSelectedId(null);
       setCleanError(null);
-      // 新的导出 seed
       exportSeedRef.current = randomSeed();
       showToast("已加载项目，可继续编辑");
     } catch (err) {
@@ -350,7 +371,109 @@ export default function App() {
     }
   }, [applyBackground, showToast]);
 
-  // ===== 渲染 =====
+  // ===== 手写样本导入 =====
+  const handleImportSample = useCallback(
+    async (profileId: string, file: File) => {
+      try {
+        const dataURL = await fileToDataURL(file);
+        const img = await loadImage(dataURL);
+        hw.importSample(
+          profileId,
+          file.name,
+          dataURL,
+          img.naturalWidth,
+          img.naturalHeight,
+        );
+        showToast("样本图已导入");
+      } catch (err) {
+        setCleanError(
+          `样本导入失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+    [hw, showToast],
+  );
+
+  // ===== 打开切割器 =====
+  const handleOpenSegmenter = useCallback(
+    async (profileId: string, sampleSetId: string) => {
+      const prof = project.handwritingProfiles.find((p) => p.id === profileId);
+      const ss = prof?.sampleSets.find((s) => s.id === sampleSetId);
+      if (!ss) return;
+      try {
+        const img = await loadImage(ss.imageBase64);
+        setSegmenterImage(img);
+      } catch {
+        setSegmenterImage(null);
+      }
+      setSegError(null);
+      setSegmenterTarget({ profileId, sampleSetId });
+    },
+    [project.handwritingProfiles],
+  );
+
+  const handleCloseSegmenter = useCallback(() => {
+    setSegmenterTarget(null);
+    setSegmenterImage(null);
+    setSegError(null);
+  }, []);
+
+  // 切割器内保存字形
+  const handleSaveGlyph = useCallback(
+    async (char: string, bbox: GlyphBoundingBox) => {
+      if (!segmenterTarget) return;
+      const prof = project.handwritingProfiles.find(
+        (p) => p.id === segmenterTarget.profileId,
+      );
+      const ss = prof?.sampleSets.find(
+        (s) => s.id === segmenterTarget.sampleSetId,
+      );
+      if (!ss) return;
+      setSegSaving(true);
+      setSegError(null);
+      const res = await hw.saveGlyph(
+        segmenterTarget.profileId,
+        segmenterTarget.sampleSetId,
+        char,
+        bbox,
+        ss.imageBase64,
+      );
+      setSegSaving(false);
+      if (!res.ok) {
+        setSegError(res.error);
+      } else {
+        showToast(`已保存字形「${char}」`);
+      }
+    },
+    [segmenterTarget, project.handwritingProfiles, hw, showToast],
+  );
+
+  const handleDeleteGlyph = useCallback(
+    (glyphId: string) => {
+      if (!segmenterTarget) return;
+      hw.deleteGlyph(segmenterTarget.profileId, glyphId);
+    },
+    [segmenterTarget, hw],
+  );
+
+  // 切割器目标 profile
+  const segmenterProfile = useMemo<HandwritingProfile | null>(() => {
+    if (!segmenterTarget) return null;
+    return (
+      project.handwritingProfiles.find(
+        (p) => p.id === segmenterTarget.profileId,
+      ) ?? null
+    );
+  }, [segmenterTarget, project.handwritingProfiles]);
+  const segmenterSampleSet = useMemo(() => {
+    if (!segmenterProfile || !segmenterTarget) return null;
+    return (
+      segmenterProfile.sampleSets.find(
+        (s) => s.id === segmenterTarget.sampleSetId,
+      ) ?? null
+    );
+  }, [segmenterProfile, segmenterTarget]);
+
   return (
     <div className="app">
       <header className="app__header">
@@ -362,11 +485,7 @@ export default function App() {
           onApiBaseChange={updateApiBase}
         />
         <div className="header-tools" style={{ marginLeft: 8 }}>
-          <button
-            className="btn"
-            onClick={handleLoadProject}
-            title="加载项目 JSON"
-          >
+          <button className="btn" onClick={handleLoadProject} title="加载项目 JSON">
             加载项目
           </button>
           <button
@@ -423,10 +542,32 @@ export default function App() {
               onSelectionEnd={handleSelectionEnd}
               exporting={exporting}
               exportSeed={exportSeedRef.current}
+              glyphImages={glyphImages}
             />
           ) : (
             <div className="canvas-empty" style={{ width: 900, height: 600 }} />
           )}
+        </div>
+
+        {/* 手写档案管理（画布下方折叠区） */}
+        <div className="hw-panel">
+          <details>
+            <summary>
+              手写档案（{project.handwritingProfiles.length}）·
+              活动档案：
+              {hw.activeProfile?.name ?? "无"}
+            </summary>
+            <ProfileManager
+              profiles={project.handwritingProfiles}
+              activeProfileId={project.activeHandwritingProfileId}
+              onCreate={hw.createProfile}
+              onRename={hw.renameProfile}
+              onDelete={hw.deleteProfile}
+              onSetActive={hw.setActiveProfile}
+              onImportSample={handleImportSample}
+              onOpenSegmenter={handleOpenSegmenter}
+            />
+          </details>
         </div>
       </main>
 
@@ -437,9 +578,24 @@ export default function App() {
         onDuplicate={handleDuplicate}
         onBringToFront={handleBringToFront}
         onSendToBack={handleSendToBack}
+        profiles={project.handwritingProfiles}
+        activeProfileId={project.activeHandwritingProfileId}
       />
 
       {toast && <div className="toast">{toast}</div>}
+
+      {segmenterTarget && segmenterProfile && segmenterSampleSet && (
+        <GlyphSegmenter
+          profile={segmenterProfile}
+          sampleSet={segmenterSampleSet}
+          image={segmenterImage}
+          onSaveGlyph={handleSaveGlyph}
+          onDeleteGlyph={handleDeleteGlyph}
+          saving={segSaving}
+          error={segError}
+          onClose={handleCloseSegmenter}
+        />
+      )}
     </div>
   );
 }

@@ -13,6 +13,11 @@ import {
   type TextObject,
   type TextStyle,
 } from "./types.js";
+import {
+  DEFAULT_RENDER_SETTINGS,
+  nowISO,
+  type HandwritingProfile,
+} from "./handwriting.js";
 
 /** 项目 JSON 的最小可识别结构（用于校验输入）。 */
 interface ProjectFileShape {
@@ -24,6 +29,8 @@ interface ProjectFileShape {
   naturalnessEnabled?: unknown;
   naturalness?: unknown;
   cleanHistory?: unknown;
+  handwritingProfiles?: unknown;
+  activeHandwritingProfileId?: unknown;
 }
 
 /** 校验 + 反序列化的结果。 */
@@ -44,6 +51,8 @@ export function createEmptyProject(): CanvasProject {
     naturalnessEnabled: false,
     naturalness: { ...DEFAULT_NATURALNESS },
     cleanHistory: [],
+    handwritingProfiles: [],
+    activeHandwritingProfileId: null,
   };
 }
 
@@ -86,9 +95,54 @@ export function deserializeProject(raw: string): LoadResult {
     cleanHistory: Array.isArray(data.cleanHistory)
       ? (data.cleanHistory as CanvasProject["cleanHistory"])
       : [],
+    // 第三轮新增字段，旧项目兼容
+    handwritingProfiles: Array.isArray(data.handwritingProfiles)
+      ? normalizeProfiles(data.handwritingProfiles)
+      : [],
+    activeHandwritingProfileId:
+      typeof data.activeHandwritingProfileId === "string"
+        ? (data.activeHandwritingProfileId as string)
+        : null,
   };
 
   return { ok: true, project };
+}
+
+/** 规范化手写档案列表（容错）。 */
+function normalizeProfiles(raw: unknown[]): HandwritingProfile[] {
+  return raw
+    .filter((p): p is Record<string, unknown> => typeof p === "object" && p !== null)
+    .map((p) => normalizeProfile(p));
+}
+
+function normalizeProfile(p: Record<string, unknown>): HandwritingProfile {
+  return {
+    id: strOr(p.id, `profile-${Math.random().toString(36).slice(2, 8)}`),
+    name: strOr(p.name, "未命名档案"),
+    createdAt: strOr(p.createdAt, nowISO()),
+    updatedAt: strOr(p.updatedAt, nowISO()),
+    description: typeof p.description === "string" ? p.description : undefined,
+    sampleSets: Array.isArray(p.sampleSets) ? (p.sampleSets as HandwritingProfile["sampleSets"]) : [],
+    glyphs: Array.isArray(p.glyphs) ? (p.glyphs as HandwritingProfile["glyphs"]) : [],
+    defaultRenderSettings: normalizeRenderSettings(
+      (p.defaultRenderSettings ?? {}) as Record<string, unknown>,
+    ),
+  };
+}
+
+function normalizeRenderSettings(
+  r: Record<string, unknown>,
+): HandwritingProfile["defaultRenderSettings"] {
+  const mode = r.preferredVariantMode;
+  return {
+    preferredVariantMode:
+      mode === "first" || mode === "weighted" ? mode : "random",
+    scale: numOr(r.scale, DEFAULT_RENDER_SETTINGS.scale),
+    baselineJitter: numOr(r.baselineJitter, DEFAULT_RENDER_SETTINGS.baselineJitter),
+    rotationJitter: numOr(r.rotationJitter, DEFAULT_RENDER_SETTINGS.rotationJitter),
+    opacityJitter: numOr(r.opacityJitter, DEFAULT_RENDER_SETTINGS.opacityJitter),
+    spacingJitter: numOr(r.spacingJitter, DEFAULT_RENDER_SETTINGS.spacingJitter),
+  };
 }
 
 function normalizeTextObjects(raw: unknown): TextObject[] {
@@ -121,6 +175,12 @@ function normalizeTextObjects(raw: unknown): TextObject[] {
           typeof o.naturalnessSeed === "number"
             ? (o.naturalnessSeed as number)
             : Math.floor(Math.random() * 0xffffffff),
+        // 第三轮新增字段，旧项目兼容：默认 font 模式
+        renderMode: o.renderMode === "handwritingGlyph" ? "handwritingGlyph" : "font",
+        handwritingProfileId:
+          typeof o.handwritingProfileId === "string"
+            ? (o.handwritingProfileId as string)
+            : null,
       } satisfies TextObject;
     });
 }

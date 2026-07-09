@@ -10,9 +10,11 @@ import {
 import type Konva from "konva";
 import {
   applyNaturalness,
+  type HandwritingProfile,
   type NaturalizedObject,
 } from "@hw-layout/shared";
 import type { CanvasProject, TextObject } from "@hw-layout/shared";
+import { GlyphText } from "./GlyphText.js";
 
 /** 用户正在框选的临时矩形（画布坐标）。 */
 interface DraftRect {
@@ -51,6 +53,8 @@ interface CanvasStageProps {
   exporting?: boolean;
   /** 导出时使用的固定种子（保证重复导出一致） */
   exportSeed?: number;
+  /** 预加载的 glyph 图片缓存（手写素材模式用） */
+  glyphImages?: Map<string, HTMLImageElement>;
 }
 
 /**
@@ -78,6 +82,7 @@ export function CanvasStage({
   onSelectionEnd,
   exporting = false,
   exportSeed,
+  glyphImages,
 }: CanvasStageProps) {
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -279,21 +284,45 @@ export function CanvasStage({
           />
         )}
 
-        {renderedTexts.map((obj) => (
-          <TextLineAware
-            key={obj.id}
-            obj={obj}
-            registerRef={(node) => {
-              if (node) textRefs.current.set(obj.id, node);
-              else textRefs.current.delete(obj.id);
-            }}
-            draggable={!selectMode && !exporting}
-            listening={!selectMode && !exporting}
-            onSelect={() => onSelect(obj.id)}
-            onDblClick={handleDblClick}
-            onChange={onChange}
-          />
-        ))}
+        {renderedTexts.map((obj) => {
+          // 手写素材模式：逐字 glyph 渲染（缺字 fallback 字体）
+          if (obj.renderMode === "handwritingGlyph" && glyphImages) {
+            const pid = obj.handwritingProfileId ?? project.activeHandwritingProfileId;
+            const prof: HandwritingProfile | null =
+              project.handwritingProfiles.find((p) => p.id === pid) ?? null;
+            return (
+              <GlyphText
+                key={obj.id}
+                obj={obj}
+                profile={prof}
+                glyphImages={glyphImages}
+                letterSpacing={obj.style.letterSpacing}
+                listening={!selectMode && !exporting}
+                registerRef={(node) => {
+                  if (node) textRefs.current.set(obj.id, node as Konva.Text);
+                  else textRefs.current.delete(obj.id);
+                }}
+                onDragEnd={(x, y) => onChange({ ...obj, x, y })}
+              />
+            );
+          }
+          // 普通字体模式
+          return (
+            <TextLineAware
+              key={obj.id}
+              obj={obj}
+              registerRef={(node) => {
+                if (node) textRefs.current.set(obj.id, node);
+                else textRefs.current.delete(obj.id);
+              }}
+              draggable={!selectMode && !exporting}
+              listening={!selectMode && !exporting}
+              onSelect={() => onSelect(obj.id)}
+              onDblClick={handleDblClick}
+              onChange={onChange}
+            />
+          );
+        })}
 
         {/* 已确认的框选区域（可视化，导出时隐藏） */}
         {!exporting &&

@@ -3,6 +3,8 @@
  * 被 apps/web 与 apps/desktop 复用。
  */
 
+import type { HandwritingProfile, TextRenderMode } from "./handwriting.js";
+
 /** 字体粗细 */
 export type FontWeight = "normal" | "bold";
 /** 字体风格（倾斜） */
@@ -61,6 +63,17 @@ export interface TextObject {
    * 保证同一项目重复导出时该对象的抖动一致。
    */
   naturalnessSeed: number;
+  /**
+   * 渲染模式：
+   * - font：用系统字体渲染
+   * - handwritingGlyph：优先用当前 profile 中该字符的 glyph 图片渲染，缺字 fallback 到字体
+   */
+  renderMode: TextRenderMode;
+  /**
+   * 当 renderMode 为 handwritingGlyph 时，指定使用的手写档案 id。
+   * 为 null 表示用项目 activeHandwritingProfileId。
+   */
+  handwritingProfileId: string | null;
 }
 
 /** 手写自然化的温和参数（位置抖动、旋转抖动、透明度变化、字号波动、基线浮动）。 */
@@ -140,4 +153,8 @@ export interface CanvasProject {
   naturalness: NaturalnessParams;
   /** 清除操作历史（栈顶为最近一次），用于撤销 */
   cleanHistory: CleanHistoryEntry[];
+  /** 手写档案列表（第三轮新增） */
+  handwritingProfiles: HandwritingProfile[];
+  /** 当前激活的手写档案 id（可为 null） */
+  activeHandwritingProfileId: string | null;
 }

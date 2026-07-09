@@ -4,6 +4,7 @@
  * TODO: 后续用 zod 或 pydantic schema 双向同步校验。
  */
 import type { RectRegion } from "./types.js";
+import type { GlyphBoundingBox } from "./handwriting.js";
 export type { RectRegion } from "./types.js";
 
 /** POST /clean-region 请求 */
@@ -46,3 +47,33 @@ export interface ExportResponse {
 
 /** 默认后端地址 */
 export const DEFAULT_API_BASE = "http://127.0.0.1:8001";
+
+/** POST /segment-glyph 请求：从样本图裁剪一个字形 */
+export interface SegmentGlyphRequest {
+  /** 样本图 base64（不含 data: 前缀） */
+  image: string;
+  mime: string;
+  /** 字形包围盒（基于原图坐标） */
+  bbox: GlyphBoundingBox;
+  /** 输出 MIME，默认 image/png */
+  outMime?: string;
+  /** 是否做二值化 */
+  threshold?: boolean;
+  /** 二值化阈值（0~255），默认 180 */
+  thresholdValue?: number;
+  /** 是否转透明背景（深色像素保留，浅色透明） */
+  transparent?: boolean;
+  /** 归一化后的边长（px），等比缩放填充，默认 0 不缩放 */
+  normalizeSize?: number;
+}
+
+/** POST /segment-glyph 响应 */
+export interface SegmentGlyphResponse {
+  /** 处理后的字形图 base64（不含 data: 前缀） */
+  image: string;
+  mime: string;
+  /** 输出宽度 */
+  width: number;
+  /** 输出高度 */
+  height: number;
+}

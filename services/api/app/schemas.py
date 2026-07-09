@@ -39,3 +39,28 @@ class ExportResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
+
+
+class GlyphBBox(BaseModel):
+    x: int = Field(..., ge=0)
+    y: int = Field(..., ge=0)
+    width: int = Field(..., gt=0)
+    height: int = Field(..., gt=0)
+
+
+class SegmentGlyphRequest(BaseModel):
+    image: str = Field(..., description="样本图 base64（不含 data: 前缀）")
+    mime: str = Field("image/png")
+    bbox: GlyphBBox
+    outMime: str | None = Field(None, description="输出 MIME，默认 image/png")
+    threshold: bool = False
+    thresholdValue: int = Field(180, ge=0, le=255)
+    transparent: bool = False
+    normalizeSize: int = Field(0, ge=0, description="归一化边长，0 不归一化")
+
+
+class SegmentGlyphResponse(BaseModel):
+    image: str
+    mime: str
+    width: int
+    height: int

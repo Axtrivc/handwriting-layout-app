@@ -14,6 +14,8 @@ import {
   type CleanRegionResponse,
   type ExportRequest,
   type ExportResponse,
+  type SegmentGlyphRequest,
+  type SegmentGlyphResponse,
 } from "@hw-layout/shared";
 
 declare global {
@@ -124,6 +126,17 @@ export async function exportFile(
   req: ExportRequest,
 ): Promise<ExportResponse> {
   return request<ExportResponse>("/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+/** 调用 /segment-glyph 裁剪并处理一个字形。 */
+export async function segmentGlyph(
+  req: SegmentGlyphRequest,
+): Promise<SegmentGlyphResponse> {
+  return request<SegmentGlyphResponse>("/segment-glyph", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
