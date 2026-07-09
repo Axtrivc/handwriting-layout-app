@@ -33,6 +33,10 @@
 - [ ] prod 加载验证：`pnpm --filter @hw-layout/desktop start` 能加载 web/dist
 - [ ] dev 模式：`pnpm dev:desktop` 能加载 vite
 - [ ] 后端不可用时弹窗提示
+- [ ] exe 打包（需稳定网络）：`pnpm package:dist`（electron-builder）
+  - 第九轮实测：electron-builder 因 Windows 工具链（squirrel-windows）下载超时未完成
+  - prod 模式 `electron .` 启动验证通过
+  - 复现方案：网络稳定后 `pnpm package:dist`，或用 `pnpm dlx electron-builder --win portable`
 
 ## 5. 手工 QA
 

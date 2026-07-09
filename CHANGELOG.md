@@ -2,6 +2,17 @@
 
 本项目版本号语义：`主.次.修订`。当前为 **0.8.0-beta**（功能完整，待真实环境长期验证）。
 
+## [0.8.0-beta] - 2026-07-09 Release 验证
+
+### 第九轮验证结果
+- Release 前检查：install/typecheck/lint/build 全过，Python 3 套 + Node 4 套测试全过
+- 后端版本同步 0.8.0，/health、/ocr/status、/clean-region、/detect-glyph-candidates、/export 联调通过
+- Electron prod 模式 `electron .` 启动验证通过（加载 web/dist）
+- RapidOCR 可选依赖安装成功（rapidocr-onnxruntime 1.2.3），/ocr/status 从 unavailable 变 ok+rapidocr
+- OCR pipeline 完整工作（provider 检测→识别→低置信度清空），合成图准确率低（需真实手写样本验证）
+- electron-builder exe 打包因 Windows 工具链（squirrel-windows）下载超时未完成，配置已就绪
+- 新增 services/api/requirements-ocr.txt（可选 OCR 依赖）
+
 ## [0.8.0] - 2026-07-09
 
 ### 第七轮：OCR 辅助标注 + 导出懒加载
@@ -62,7 +73,8 @@
 - jspdf chunk 仍 >500KB（独立懒加载，不影响首屏）
 - 非活动页 PDF 的 glyph 离屏渲染已支持，但建议导出前切到该页获得最佳效果
 - 浏览器 canvas 最大 ~16384px，超大图导出受限
-- electron-builder 打包未集成（需手动安装）
+- electron-builder exe 打包需稳定网络下载 Windows 工具链（squirrel-windows），prod 模式 `electron .` 已验证可运行
+- RapidOCR 合成图准确率低，真实手写样本效果待验证
 - PDF 导入未实现
 
 ## 下一步计划

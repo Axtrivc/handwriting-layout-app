@@ -1,0 +1,4 @@
+# OCR 可选依赖（不影响主功能，未安装时 OCR 返回 unavailable）
+# 启用 OCR 辅助标注时安装：
+#   pip install -r requirements-ocr.txt
+rapidocr-onnxruntime>=1.2
