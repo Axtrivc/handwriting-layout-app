@@ -1,6 +1,6 @@
 {
   "name": "handwriting-layout-app",
-  "version": "0.1.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "合规的本地桌面应用：个人笔记美化、扫描稿恢复、模板重排版、个人手写风格排版。",
@@ -13,10 +13,14 @@
     "dev:web": "pnpm --filter @hw-layout/web dev",
     "dev:desktop": "pnpm --filter @hw-layout/desktop dev",
     "dev:api": "node scripts/run-api.mjs",
+    "build:shared": "pnpm --filter @hw-layout/shared build",
+    "build:web": "pnpm --filter @hw-layout/shared build && pnpm --filter @hw-layout/web build",
+    "build:desktop": "pnpm build:web && pnpm --filter @hw-layout/desktop build:desktop",
+    "package:desktop": "pnpm build:desktop && pnpm --filter @hw-layout/desktop package:desktop",
+    "package:dist": "pnpm build:desktop && pnpm --filter @hw-layout/desktop package:dist",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
-    "build": "pnpm --filter @hw-layout/shared build && pnpm -r build",
-    "build:web": "pnpm --filter @hw-layout/shared build && pnpm --filter @hw-layout/web build"
+    "build": "pnpm --filter @hw-layout/shared build && pnpm -r build"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

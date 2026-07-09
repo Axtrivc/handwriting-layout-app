@@ -2,7 +2,10 @@ packages:
   - "packages/*"
   - "apps/*"
 
-# 允许以下依赖执行 install 脚本（下载平台二进制 / polyfill 注入）
+allowBuilds:
+  core-js: set this to true or false
+
+# 允许以下依赖执行 install 脚本
 onlyBuiltDependencies:
   - electron
   - esbuild

@@ -320,10 +320,16 @@ body {
   justify-content: center;
   color: var(--muted);
   font-size: 14px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
 }
 
 .canvas-empty::after {
-  content: "请在左侧上传扫描稿图片";
+  content: "左侧上传扫描稿图片开始编辑\A 或点顶部「加载」打开 demo-project.json 体验";
+  white-space: pre;
+  line-height: 1.8;
 }
 
 .hint {

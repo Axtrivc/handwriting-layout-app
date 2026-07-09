@@ -97,6 +97,16 @@
 - 导出模块懒加载：jspdf/jszip 改为 dynamic import，降低主包体积
 - dirty/clean 状态：未保存修改提示、刷新前警告、标题栏红点
 
+### 第八轮：产品化收尾 + Release 准备（已完成）
+
+- Electron 桌面：窗口最小尺寸、prod 打包路径兼容、后端可用性检查弹窗
+- 桌面脚本：dev:desktop、build:desktop、package:desktop（electron-builder 可选）
+- demo 工程：storage/samples/demo-project.json（2页+glyph+缺字+naturalness）
+- 空状态收尾：上传/加载引导、disconnected 提示
+- docs/manual-qa.md 场景化验收清单
+- docs/performance.md、CHANGELOG.md、docs/release-checklist.md
+- 版本 0.8.0-beta
+
 ### 第六阶段：导出与集成
 
 - PDF 导出（矢量 + 光学）
