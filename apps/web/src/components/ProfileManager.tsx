@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { HandwritingProfile } from "@hw-layout/shared";
+import { profileCoverage, type HandwritingProfile } from "@hw-layout/shared";
 
 interface ProfileManagerProps {
   profiles: HandwritingProfile[];
@@ -70,7 +70,7 @@ export function ProfileManager({
         {profiles.map((p) => {
           const isActive = p.id === activeProfileId;
           const isExpanded = p.id === expandedId;
-          const coveredChars = new Set(p.glyphs.map((g) => g.char)).size;
+          const stats = profileCoverage(p.glyphs);
           return (
             <li key={p.id} className={`hw-item ${isActive ? "is-active" : ""}`}>
               <div className="hw-item__head">
@@ -128,8 +128,9 @@ export function ProfileManager({
                 <div className="hw-item__body">
                   <div className="hw-stats">
                     <span>样本图：{p.sampleSets.length}</span>
-                    <span>字形：{p.glyphs.length}</span>
-                    <span>覆盖字符：{coveredChars}</span>
+                    <span>字形：{stats.totalGlyphs}</span>
+                    <span>覆盖字符：{stats.coveredChars}</span>
+                    <span>多 variant：{stats.multiVariantChars}</span>
                   </div>
 
                   <label className="btn hw-import" style={{ display: "block", textAlign: "center" }}>

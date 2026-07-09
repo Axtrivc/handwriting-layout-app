@@ -17,6 +17,7 @@ from .config import CORS_ORIGINS, DEFAULT_INPAINT_RADIUS
 from .routes.clean import router as clean_router
 from .routes.export import router as export_router
 from .routes.glyph import router as glyph_router
+from .routes.detect import router as detect_router
 from .schemas import HealthResponse
 
 app = FastAPI(
@@ -36,6 +37,7 @@ app.add_middleware(
 app.include_router(clean_router, tags=["clean"])
 app.include_router(export_router, tags=["export"])
 app.include_router(glyph_router, tags=["glyph"])
+app.include_router(detect_router, tags=["detect"])
 
 
 @app.get("/health", response_model=HealthResponse)

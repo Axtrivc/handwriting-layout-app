@@ -64,3 +64,30 @@ class SegmentGlyphResponse(BaseModel):
     mime: str
     width: int
     height: int
+
+
+class DetectGlyphCandidatesRequest(BaseModel):
+    image: str = Field(..., description="样本图 base64（不含 data: 前缀）")
+    mime: str = Field("image/png")
+    threshold: int | None = Field(None, ge=0, le=255)
+    minWidth: int | None = Field(None, ge=1)
+    minHeight: int | None = Field(None, ge=1)
+    maxWidth: int | None = Field(None, ge=1)
+    maxHeight: int | None = Field(None, ge=1)
+    mergeNearby: bool | None = None
+    rowTolerance: int | None = Field(None, ge=1)
+
+
+class GlyphCandidateItem(BaseModel):
+    x: int
+    y: int
+    width: int
+    height: int
+    score: float
+    rowIndex: int
+    orderIndex: int
+
+
+class DetectGlyphCandidatesResponse(BaseModel):
+    candidates: list[GlyphCandidateItem]
+    count: int

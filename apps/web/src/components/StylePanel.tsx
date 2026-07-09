@@ -1,8 +1,4 @@
-import type {
-  HandwritingProfile,
-  TextAlign,
-  TextObject,
-} from "@hw-layout/shared";
+import { missingChars, type HandwritingProfile, type TextAlign, type TextObject } from "@hw-layout/shared";
 
 interface StylePanelProps {
   selected: TextObject | null;
@@ -101,9 +97,25 @@ export function StylePanel({
               </option>
             ))}
           </select>
-          <span className="hint">
-            覆盖字形：{coveredCharCount(selected.text, profiles, selected.handwritingProfileId, activeProfileId)} 字
-          </span>
+          {(() => {
+            const pid = selected.handwritingProfileId ?? activeProfileId;
+            const prof = profiles.find((p) => p.id === pid);
+            if (!prof) {
+              return <span className="hint">未选择档案，将全部 fallback 到字体</span>;
+            }
+            const covered = new Set(prof.glyphs.map((g) => g.char));
+            const missing = missingChars(selected.text, covered);
+            return (
+              <div className="hint">
+                覆盖字形：{coveredCharCount(selected.text, profiles, selected.handwritingProfileId, activeProfileId)} 字
+                {missing.length > 0 && (
+                  <span className="missing-chars" title="这些字符会 fallback 到字体渲染">
+                    {"\n"}缺少字形：{missing.join("、")}
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 

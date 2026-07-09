@@ -7,6 +7,7 @@ import {
   serializeProject,
   type CanvasProject,
   type GlyphBoundingBox,
+  type GlyphCandidate,
   type HandwritingProfile,
   type NaturalnessParams,
   type TextObject,
@@ -20,7 +21,7 @@ import { GlyphSegmenter } from "./components/GlyphSegmenter.js";
 import { useGlyphImages } from "./components/GlyphText.js";
 import { useConnection } from "./lib/useConnection.js";
 import { useHandwriting } from "./lib/useHandwriting.js";
-import { ApiError, cleanRegion } from "./lib/apiClient.js";
+import { ApiError, cleanRegion, detectGlyphCandidates } from "./lib/apiClient.js";
 import {
   downloadText,
   downloadURL,
@@ -65,6 +66,7 @@ export default function App() {
   const [segmenterImage, setSegmenterImage] = useState<HTMLImageElement | null>(null);
   const [segSaving, setSegSaving] = useState(false);
   const [segError, setSegError] = useState<string | null>(null);
+  const [detecting, setDetecting] = useState(false);
 
   // 后端连接状态
   const { status, apiBase, updateApiBase, reconnect } = useConnection();
@@ -456,6 +458,54 @@ export default function App() {
     [segmenterTarget, hw],
   );
 
+  // 自动检测候选框
+  const handleDetect = useCallback(
+    async (sampleDataURL: string): Promise<GlyphCandidate[]> => {
+      setDetecting(true);
+      setSegError(null);
+      try {
+        const { data, mime } = splitDataURL(sampleDataURL);
+        const resp = await detectGlyphCandidates({ image: data, mime });
+        return resp.candidates;
+      } catch (err) {
+        setSegError(describeError(err));
+        return [];
+      } finally {
+        setDetecting(false);
+      }
+    },
+    [],
+  );
+
+  // 批量保存字形
+  const handleBatchSaveGlyphs = useCallback(
+    async (
+      items: { char: string; bbox: GlyphBoundingBox }[],
+    ): Promise<{ saved: number; skipped: number }> => {
+      if (!segmenterTarget) return { saved: 0, skipped: 0 };
+      const prof = project.handwritingProfiles.find(
+        (p) => p.id === segmenterTarget.profileId,
+      );
+      const ss = prof?.sampleSets.find(
+        (s) => s.id === segmenterTarget.sampleSetId,
+      );
+      if (!ss) return { saved: 0, skipped: items.length };
+      setSegSaving(true);
+      setSegError(null);
+      const res = await hw.batchSaveGlyphs(
+        segmenterTarget.profileId,
+        segmenterTarget.sampleSetId,
+        items,
+        ss.imageBase64,
+      );
+      setSegSaving(false);
+      if (res.error) setSegError(res.error);
+      else if (res.saved > 0) showToast(`批量保存 ${res.saved} 个字形`);
+      return { saved: res.saved, skipped: res.skipped };
+    },
+    [segmenterTarget, project.handwritingProfiles, hw, showToast],
+  );
+
   // 切割器目标 profile
   const segmenterProfile = useMemo<HandwritingProfile | null>(() => {
     if (!segmenterTarget) return null;
@@ -590,10 +640,13 @@ export default function App() {
           sampleSet={segmenterSampleSet}
           image={segmenterImage}
           onSaveGlyph={handleSaveGlyph}
+          onBatchSaveGlyphs={handleBatchSaveGlyphs}
           onDeleteGlyph={handleDeleteGlyph}
           saving={segSaving}
           error={segError}
           onClose={handleCloseSegmenter}
+          onDetect={handleDetect}
+          detecting={detecting}
         />
       )}
     </div>

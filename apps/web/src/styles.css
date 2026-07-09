@@ -536,3 +536,48 @@ body {
   justify-content: space-between;
   padding: 2px 4px;
 }
+
+.seg-detect {
+  background: rgba(26, 162, 96, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+/* 缺字提示 */
+.missing-chars {
+  display: block;
+  margin-top: 4px;
+  color: #c47a00;
+  line-height: 1.5;
+}
+
+/* 候选框列表 */
+.cand-list {
+  margin-top: 8px;
+}
+.cand-list__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 100px;
+  overflow: auto;
+}
+.cand-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--panel);
+}
+.cand-chip:hover {
+  border-color: var(--accent);
+}
+.cand-chip.is-active {
+  border-color: #1aa260;
+  background: rgba(26, 162, 96, 0.1);
+}

@@ -298,6 +298,8 @@ export function CanvasStage({
                 glyphImages={glyphImages}
                 letterSpacing={obj.style.letterSpacing}
                 listening={!selectMode && !exporting}
+                naturalness={exporting ? project.naturalness : null}
+                applyBaselineJitter={exporting && project.naturalnessEnabled}
                 registerRef={(node) => {
                   if (node) textRefs.current.set(obj.id, node as Konva.Text);
                   else textRefs.current.delete(obj.id);

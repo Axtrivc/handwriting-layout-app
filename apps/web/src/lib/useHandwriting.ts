@@ -40,6 +40,13 @@ export interface UseHandwritingResult {
     bbox: GlyphBoundingBox,
     sampleDataURL: string,
   ) => Promise<{ ok: true; glyph: HandwritingGlyph } | { ok: false; error: string }>;
+  /** 批量保存多个字形，返回成功/跳过数 */
+  batchSaveGlyphs: (
+    profileId: string,
+    sampleSetId: string,
+    items: { char: string; bbox: GlyphBoundingBox }[],
+    sampleDataURL: string,
+  ) => Promise<{ saved: number; skipped: number; error?: string }>;
   deleteGlyph: (profileId: string, glyphId: string) => void;
   /** 按字符搜索 glyph（返回该 profile 下匹配的 glyph） */
   searchGlyphs: (profileId: string, query: string) => HandwritingGlyph[];
@@ -219,6 +226,65 @@ export function useHandwriting({
     [mutate],
   );
 
+  const batchSaveGlyphs = useCallback(
+    async (
+      profileId: string,
+      sampleSetId: string,
+      items: { char: string; bbox: GlyphBoundingBox }[],
+      sampleDataURL: string,
+    ): Promise<{ saved: number; skipped: number; error?: string }> => {
+      if (items.length === 0) return { saved: 0, skipped: 0 };
+      try {
+        const { data, mime } = splitDataURL(sampleDataURL);
+        const newGlyphs: HandwritingGlyph[] = [];
+        // 计算每个字符已有 variant 数（基于当前 profiles 快照）
+        const prof = profiles.find((p) => p.id === profileId);
+        const variantCounter = new Map<string, number>();
+        for (const g of prof?.glyphs ?? []) {
+          variantCounter.set(g.char, (variantCounter.get(g.char) ?? 0) + 1);
+        }
+
+        for (const item of items) {
+          const c = item.char.trim();
+          if (!c) continue;
+          const resp = await segmentGlyph({
+            image: data,
+            mime,
+            bbox: item.bbox,
+            outMime: "image/png",
+            transparent: true,
+          });
+          const glyphDataURL = `data:${resp.mime};base64,${resp.image}`;
+          const vi = variantCounter.get(c) ?? 0;
+          variantCounter.set(c, vi + 1);
+          newGlyphs.push({
+            id: uid(),
+            profileId,
+            char: c,
+            imageBase64: glyphDataURL,
+            bbox: item.bbox,
+            sourceSampleSetId: sampleSetId,
+            variantIndex: vi,
+            createdAt: nowISO(),
+          });
+        }
+        if (newGlyphs.length > 0) {
+          mutate((list) =>
+            list.map((p) =>
+              p.id === profileId
+                ? touch({ ...p, glyphs: [...p.glyphs, ...newGlyphs] })
+                : p,
+            ),
+          );
+        }
+        return { saved: newGlyphs.length, skipped: items.length - newGlyphs.length };
+      } catch (err) {
+        return { saved: 0, skipped: items.length, error: describeError(err) };
+      }
+    },
+    [mutate, profiles],
+  );
+
   const searchGlyphs = useCallback(
     (profileId: string, query: string): HandwritingGlyph[] => {
       const p = profiles.find((x) => x.id === profileId);
@@ -248,6 +314,7 @@ export function useHandwriting({
     setActiveProfile,
     importSample,
     saveGlyph,
+    batchSaveGlyphs,
     deleteGlyph,
     searchGlyphs,
     variantsOf,

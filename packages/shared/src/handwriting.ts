@@ -97,6 +97,27 @@ export const DEFAULT_RENDER_SETTINGS: HandwritingRenderSettings = {
   spacingJitter: 0.5,
 };
 
+/** 字形质量等级（仅提示，不阻止保存）。 */
+export type GlyphQualityLevel = "good" | "warning" | "poor";
+
+/** 字形质量评估结果。 */
+export interface GlyphQualityResult {
+  level: GlyphQualityLevel;
+  /** 具体问题列表（level 为 warning/poor 时非空） */
+  issues: string[];
+}
+
+/** 自动检测出的字形候选区域（对应后端 /detect-glyph-candidates）。 */
+export interface GlyphCandidate {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  score: number;
+  rowIndex: number;
+  orderIndex: number;
+}
+
 /** 文本对象的渲染模式 */
 export type TextRenderMode = "font" | "handwritingGlyph";
 

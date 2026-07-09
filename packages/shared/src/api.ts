@@ -4,8 +4,9 @@
  * TODO: 后续用 zod 或 pydantic schema 双向同步校验。
  */
 import type { RectRegion } from "./types.js";
-import type { GlyphBoundingBox } from "./handwriting.js";
+import type { GlyphBoundingBox, GlyphCandidate } from "./handwriting.js";
 export type { RectRegion } from "./types.js";
+export type { GlyphCandidate } from "./handwriting.js";
 
 /** POST /clean-region 请求 */
 export interface CleanRegionRequest {
@@ -76,4 +77,23 @@ export interface SegmentGlyphResponse {
   width: number;
   /** 输出高度 */
   height: number;
+}
+
+/** POST /detect-glyph-candidates 请求 */
+export interface DetectGlyphCandidatesRequest {
+  image: string;
+  mime: string;
+  threshold?: number;
+  minWidth?: number;
+  minHeight?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+  mergeNearby?: boolean;
+  rowTolerance?: number;
+}
+
+/** POST /detect-glyph-candidates 响应 */
+export interface DetectGlyphCandidatesResponse {
+  candidates: GlyphCandidate[];
+  count: number;
 }

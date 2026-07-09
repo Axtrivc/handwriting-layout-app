@@ -12,6 +12,8 @@ import {
   DEFAULT_API_BASE,
   type CleanRegionRequest,
   type CleanRegionResponse,
+  type DetectGlyphCandidatesRequest,
+  type DetectGlyphCandidatesResponse,
   type ExportRequest,
   type ExportResponse,
   type SegmentGlyphRequest,
@@ -137,6 +139,17 @@ export async function segmentGlyph(
   req: SegmentGlyphRequest,
 ): Promise<SegmentGlyphResponse> {
   return request<SegmentGlyphResponse>("/segment-glyph", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+/** 调用 /detect-glyph-candidates 自动检测字形候选区域。 */
+export async function detectGlyphCandidates(
+  req: DetectGlyphCandidatesRequest,
+): Promise<DetectGlyphCandidatesResponse> {
+  return request<DetectGlyphCandidatesResponse>("/detect-glyph-candidates", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),

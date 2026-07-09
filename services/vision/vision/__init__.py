@@ -19,6 +19,15 @@ from .glyph import (  # noqa: F401
     apply_threshold,
     make_transparent,
 )
+from .glyph_detect import (  # noqa: F401
+    GlyphCandidate,
+    DetectParams,
+    detect_glyph_candidates,
+    filter_small_noise,
+    group_candidates_by_rows,
+    sort_candidates_reading_order,
+    detect_and_sort,
+)
 
 __all__ = [
     "image_to_b64",
@@ -33,4 +42,11 @@ __all__ = [
     "normalize_glyph_size",
     "apply_threshold",
     "make_transparent",
+    "GlyphCandidate",
+    "DetectParams",
+    "detect_glyph_candidates",
+    "filter_small_noise",
+    "group_candidates_by_rows",
+    "sort_candidates_reading_order",
+    "detect_and_sort",
 ]
