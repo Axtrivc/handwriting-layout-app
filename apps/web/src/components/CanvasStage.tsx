@@ -194,9 +194,17 @@ export function CanvasStage({
   };
 
   // 把屏幕坐标转画布坐标（考虑 stage scale/position）
-  const toCanvasPos = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    const stage = e.target.getStage();
-    return stage?.getPointerPosition() ?? null;
+  // 用 getRelativePointerPosition 而非 getPointerPosition，
+  // 前者返回 Stage 内容坐标系（已扣除 scale/position 变换），
+  // 后者返回容器坐标系（不扣除变换），缩放后会导致框选坐标错乱。
+  const getRelativeCanvasPos = (): { x: number; y: number } | null => {
+    const stage = stageRef.current;
+    if (!stage) return null;
+    // getRelativePointerPosition 是 Konva Stage 的方法，
+    // 返回相对于 Stage 内容坐标系的指针位置（扣除 transform）
+    const pos = stage.getRelativePointerPosition();
+    if (!pos) return null;
+    return { x: pos.x, y: pos.y };
   };
 
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -210,7 +218,7 @@ export function CanvasStage({
       }
       return;
     }
-    const pos = toCanvasPos(e);
+    const pos = getRelativeCanvasPos();
     if (!pos) return;
     dragStart.current = pos;
     setDraft({ x: pos.x, y: pos.y, width: 0, height: 0 });
@@ -218,8 +226,7 @@ export function CanvasStage({
 
   const handleMouseMove = () => {
     if (!selectMode || !dragStart.current) return;
-    const stage = stageRef.current;
-    const pos = stage?.getPointerPosition();
+    const pos = getRelativeCanvasPos();
     if (!pos) return;
     const start = dragStart.current;
     setDraft({
