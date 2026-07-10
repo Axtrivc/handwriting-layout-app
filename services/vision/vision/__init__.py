@@ -8,7 +8,7 @@
 """
 from .encoding import image_to_b64, b64_to_image  # noqa: F401
 from .regions import RectRegion  # noqa: F401
-from .inpaint import clean_regions  # noqa: F401
+from .inpaint import clean_regions, InpaintOptions  # noqa: F401
 from .glyph import (  # noqa: F401
     GlyphOutput,
     GlyphProcessOptions,
@@ -45,6 +45,7 @@ __all__ = [
     "b64_to_image",
     "RectRegion",
     "clean_regions",
+    "InpaintOptions",
     "GlyphOutput",
     "GlyphProcessOptions",
     "process_glyph",

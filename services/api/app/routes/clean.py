@@ -17,6 +17,7 @@ if str(_VISION_PARENT) not in sys.path:
     sys.path.insert(0, str(_VISION_PARENT))
 
 from vision import (  # noqa: E402  -- sys.path 注入后再导入
+    InpaintOptions,
     RectRegion,
     b64_to_image,
     clean_regions,
@@ -45,7 +46,11 @@ def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
         for r in req.regions
     ]
 
-    result, processed = clean_regions(img, regions, radius=DEFAULT_INPAINT_RADIUS)
+    result, processed = clean_regions(
+        img,
+        regions,
+        options=InpaintOptions(algorithm="ns", radius=DEFAULT_INPAINT_RADIUS),
+    )
     if processed == 0:
         raise HTTPException(status_code=400, detail="没有有效的清理区域")
 
