@@ -1,12 +1,7 @@
 """去字迹 / inpaint 核心实现。
 
-对用户**手动框选**的区域清除字迹，保留背景（纸张纹理、横线等）。
-
-核心思路：
-1. 只在框选区域内提取深色笔画(文字)mask
-2. **横线保护**：检测区域内的水平线位置，从 mask 中排除，避免横线被 inpaint
-3. 充分膨胀 mask 确保文字边缘完全覆盖（彻底清除，不残留淡影）
-4. inpaint 后**重建横线**：从区域外采样横线颜色，在原位置重绘
+对用户**手动框选**的区域清除字迹，保留背景（纸张纹理、横线等），
+并**重建被清除区域内的横线**（支持实线/虚线，从两侧采样复制）。
 
 合规说明：仅接受用户主动框选的区域，不做自动整页字迹识别与擦除。
 """
@@ -35,87 +30,140 @@ def _to_pil(bgr: np.ndarray) -> Image.Image:
 class InpaintOptions:
     algorithm: str = "ns"
     radius: int = 6
-    # 笔画检测阈值：灰度低于此值视为文字。None=Otsu自动。
     ink_threshold: int | None = 100
-    # mask 膨胀次数（确保文字边缘完全覆盖）
     dilate_iterations: int = 3
-    # 是否检测并保护/重建横线
     detect_lines: bool = True
 
 
 def _detect_horizontal_lines(
     gray: np.ndarray, x: int, y: int, w: int, h: int, img_w: int, img_h: int
 ) -> list[dict]:
-    """检测框选区域及其上下方的水平线。
+    """检测框选区域附近的水平线（支持实线和虚线）。
 
-    在框选区域外（上方20px、下方20px）扫描水平线，
-    如果找到，记录其相对框选区域的 y 偏移和颜色。
+    采样策略：在框选区域的**左侧和右侧**（区域外）逐行扫描。
+    水平线特征：某一行在区域外有明显的非白像素聚集。
 
     Returns:
-        线信息列表：[{y: 绝对y坐标, color: (B,G,R), thickness: 粗细}]
+        [{y: 绝对y, left_pattern: 左侧像素数组, right_pattern: 右侧像素数组}]
+        pattern 用于重建时复制线型。
     """
     lines = []
-    scan_top = max(0, y - 25)
-    scan_bottom = min(img_h, y + h + 25)
+    scan_top = max(0, y - 10)
+    scan_bottom = min(img_h, y + h + 10)
+
+    # 采样区域外的左右各 40px
+    margin = 40
+    left_start = max(0, x - margin)
+    left_end = x
+    right_start = min(img_w, x + w)
+    right_end = min(img_w, x + w + margin)
+
+    if left_end - left_start < 5 and right_end - right_start < 5:
+        return lines
 
     for ly in range(scan_top, scan_bottom):
-        # 采样该行左右各一段（框选区域外）
-        left_x = max(0, x - 30)
-        right_x = min(img_w, x + w + 30)
-        if right_x - left_x < 10:
-            continue
-        row = gray[ly, left_x:right_x]
-        # 水平线特征：该行大部分像素是中等灰度(非白非黑)，且灰度一致
-        non_white = row[row < 220]
-        if len(non_white) < (right_x - left_x) * 0.4:
-            continue
-        # 检查灰度一致性（线的颜色应该接近）
-        if non_white.std() > 40:
-            continue
-        median_val = int(np.median(non_white))
-        # 排除太深的线（可能是文字的一部分）
-        if median_val < 80:
-            continue
-        # 排除太浅的（噪声）
-        if median_val > 210:
-            continue
-        # 确认是连续的水平线（允许小间隙）
-        line_pixels = row < 220
-        # 最长连续段
-        max_run = 0
-        cur_run = 0
-        for v in line_pixels:
-            if v:
-                cur_run += 1
-                max_run = max(max_run, cur_run)
-            else:
-                cur_run = 0
-        if max_run < (right_x - left_x) * 0.5:
+        # 检查左右两侧是否有横线
+        left_row = gray[ly, left_start:left_end] if left_end > left_start else np.array([])
+        right_row = gray[ly, right_start:right_end] if right_end > right_start else np.array([])
+
+        left_nonwhite = left_row[left_row < 220] if len(left_row) > 0 else np.array([])
+        right_nonwhite = right_row[right_row < 220] if len(right_row) > 0 else np.array([])
+
+        # 至少一侧有足够的非白像素
+        left_ok = len(left_nonwhite) >= max(3, (left_end - left_start) * 0.2)
+        right_ok = len(right_nonwhite) >= max(3, (right_end - right_start) * 0.2)
+
+        if not (left_ok or right_ok):
             continue
 
-        # 采样线的 BGR 颜色（从原始 BGR 图）
-        lines.append({"y": ly, "gray": median_val})
+        # 灰度一致性（线颜色应接近）
+        all_nonwhite = np.concatenate([left_nonwhite, right_nonwhite]) if len(left_nonwhite) + len(right_nonwhite) > 0 else np.array([200])
+        if all_nonwhite.std() > 50:
+            continue
+        median_val = int(np.median(all_nonwhite))
+        # 排除太深（文字）或太浅（噪声）
+        if median_val < 70 or median_val > 215:
+            continue
+
+        lines.append({
+            "y": ly,
+            "gray": median_val,
+            "left_start": left_start,
+            "left_end": left_end,
+            "right_start": right_start,
+            "right_end": right_end,
+        })
 
     # 去重：相近 y 合并
     lines.sort(key=lambda l: l["y"])
     deduped: list[dict] = []
     for l in lines:
-        if deduped and abs(l["y"] - deduped[-1]["y"]) <= 2:
+        if deduped and abs(l["y"] - deduped[-1]["y"]) <= 1:
             continue
         deduped.append(l)
     return deduped
 
 
-def _sample_line_color(bgr: np.ndarray, gray: np.ndarray, line_y: int, x: int, w: int, img_w: int) -> tuple[int, int, int]:
-    """采样横线的 BGR 颜色。"""
-    left_x = max(0, x - 20)
-    right_x = min(img_w, x + w + 20)
-    row_gray = gray[line_y, left_x:right_x]
-    mask = row_gray < 220
-    if mask.sum() > 0:
-        row_bgr = bgr[line_y, left_x:right_x]
-        return tuple(int(v) for v in row_bgr[mask].mean(axis=0))
-    return (200, 200, 200)
+def _rebuild_line_in_region(
+    result_bgr: np.ndarray,
+    original_bgr: np.ndarray,
+    gray: np.ndarray,
+    ln: dict,
+    region_x: int,
+    region_w: int,
+    img_w: int,
+) -> None:
+    """在清除区域内重建一条横线。
+
+    从区域左右两侧采样原始横线的像素（保留线型：实线/虚线/粗细），
+    在清除区域内的对应位置复制。
+    """
+    ly = ln["y"]
+    left_start = ln["left_start"]
+    left_end = ln["left_end"]
+    right_start = ln["right_start"]
+    right_end = ln["right_end"]
+
+    # 采样左右两侧该行的像素
+    left_pixels = original_bgr[ly, left_start:left_end] if left_end > left_start else np.array([]).reshape(0, 3)
+    right_pixels = original_bgr[ly, right_start:right_end] if right_end > right_start else np.array([]).reshape(0, 3)
+
+    # 重建区域内的横线：用左右采样的像素填充
+    gap_start = region_x
+    gap_end = min(img_w, region_x + region_w)
+
+    if gap_end <= gap_start:
+        return
+
+    gap_width = gap_end - gap_start
+
+    # 策略：把左右两侧的像素拼接成一条 pattern，在 gap 内重复/延伸
+    # 左侧像素从右到左读（贴近 gap 的部分在前面），右侧像素从左到右读
+    pattern_left = left_pixels[::-1] if len(left_pixels) > 0 else np.array([]).reshape(0, 3)
+    pattern_right = right_pixels if len(right_pixels) > 0 else np.array([]).reshape(0, 3)
+    pattern = np.vstack([pattern_left, pattern_right]) if len(pattern_left) + len(pattern_right) > 0 else None
+
+    if pattern is None or len(pattern) == 0:
+        # 没有可用的 pattern，用纯色画线
+        color = (ln["gray"], ln["gray"], ln["gray"])
+        cv2.line(result_bgr, (gap_start, ly), (gap_end - 1, ly), color, 1)
+        return
+
+    # 在 gap 内逐像素复制 pattern
+    for i in range(gap_width):
+        px = pattern[i % len(pattern)]
+        result_bgr[ly, gap_start + i] = px
+
+    # 如果横线有粗细（多于1px），检查上下行
+    for dy in [-1, 1]:
+        ny = ly + dy
+        if 0 <= ny < result_bgr.shape[0]:
+            # 检查原始图该位置是否也是横线（粗线）
+            left_check = gray[ny, left_start:left_end] if left_end > left_start else np.array([])
+            if len(left_check) > 0 and np.mean(left_check < 220) > 0.3:
+                for i in range(gap_width):
+                    px = pattern[i % len(pattern)]
+                    result_bgr[ny, gap_start + i] = px
 
 
 def clean_regions(
@@ -124,15 +172,7 @@ def clean_regions(
     radius: int = 6,
     options: InpaintOptions | None = None,
 ) -> tuple[Image.Image, int]:
-    """对给定区域清除字迹（保留背景和横线）。
-
-    流程：
-    1. 提取框选区域内的文字 mask（深色笔画）
-    2. 检测横线位置，从 mask 中排除横线像素（保护横线）
-    3. 充分膨胀 mask（彻底覆盖文字边缘）
-    4. inpaint 填充文字位置
-    5. 重建横线（在原位置重绘）
-    """
+    """对给定区域清除字迹（保留背景，重建横线）。"""
     if not regions:
         return img, 0
 
@@ -141,10 +181,9 @@ def clean_regions(
     h, w = bgr.shape[:2]
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-    # 全图文字 mask
     ink_mask = np.zeros((h, w), dtype=np.uint8)
-    # 记录每个区域检测到的横线（用于重建）
-    all_lines: list[dict] = []
+    # 记录每个区域检测到的横线 + 区域信息
+    region_lines: list[tuple[dict, int, int]] = []  # (line_info, region_x, region_w)
     processed = 0
 
     for region in regions:
@@ -157,37 +196,33 @@ def clean_regions(
         if region_gray.size == 0:
             continue
 
-        # --- 1. 提取文字 mask ---
+        # 1. 提取文字 mask
         if opts.ink_threshold is not None:
             ink = (region_gray < opts.ink_threshold).astype(np.uint8) * 255
         else:
             blurred = cv2.GaussianBlur(region_gray, (3, 3), 0)
             _, ink = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-        # --- 2. 横线保护：从 mask 中排除横线像素 ---
+        # 2. 横线保护：检测横线并从 mask 排除
         line_mask = np.zeros_like(ink)
         if opts.detect_lines:
             detected = _detect_horizontal_lines(gray, rx, ry, rw, rh, w, h)
             for ln in detected:
                 ly_in_region = ln["y"] - ry
                 if 0 <= ly_in_region < rh:
-                    # 在横线所在行 ±2 像素标记保护
                     for dy in range(-2, 3):
                         yy = ly_in_region + dy
                         if 0 <= yy < rh:
-                            # 只保护浅色像素（横线），不保护深色（可能是文字）
                             line_pixels = region_gray[yy, :] >= 120
                             line_mask[yy, line_pixels] = 255
-                    all_lines.append(ln)
+                region_lines.append((ln, rx, rw))
 
-        # 从文字 mask 中减去横线保护区
         ink = cv2.bitwise_and(ink, cv2.bitwise_not(line_mask))
 
-        # --- 3. 膨胀 mask（彻底覆盖文字边缘） ---
+        # 3. 膨胀
         if opts.dilate_iterations > 0:
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             ink = cv2.dilate(ink, kernel, iterations=opts.dilate_iterations)
-            # 膨胀后再次排除横线区域（防止膨胀扩散到横线）
             ink = cv2.bitwise_and(ink, cv2.bitwise_not(line_mask))
 
         ink_mask[ry : ry + rh, rx : rx + rw] = ink
@@ -195,22 +230,15 @@ def clean_regions(
 
     if processed == 0:
         return img, 0
-
     if cv2.countNonZero(ink_mask) == 0:
         return img, processed
 
-    # --- 4. inpaint ---
+    # 4. inpaint
     flag = cv2.INPAINT_NS if opts.algorithm == "ns" else cv2.INPAINT_TELEA
     result = cv2.inpaint(bgr, ink_mask, inpaintRadius=opts.radius, flags=flag)
 
-    # --- 5. 重建横线 ---
-    if all_lines:
-        for ln in all_lines:
-            ly = ln["y"]
-            if 0 <= ly < h:
-                # 采样线的颜色（从 inpaint 前的原图区域外）
-                color = _sample_line_color(bgr, gray, ly, min(r.x for r in regions if r.is_valid()), w, w)
-                # 在结果图上重绘横线
-                cv2.line(result, (0, ly), (w, ly), color, 1)
+    # 5. 重建横线：从两侧采样原始线型，在清除区域内复制
+    for ln, rx, rw in region_lines:
+        _rebuild_line_in_region(result, bgr, gray, ln, rx, rw, w)
 
     return _to_pil(result), processed
