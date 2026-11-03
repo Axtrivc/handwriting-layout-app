@@ -18,7 +18,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 API = "http://127.0.0.1:8001"
-OUT_DIR = Path(__file__).resolve().parents[1] / ".." / "storage" / "outputs"
+OUT_DIR = Path(__file__).resolve().parents[3] / "storage" / "outputs"
 OUT_DIR = OUT_DIR.resolve()
 
 

@@ -17,12 +17,15 @@ class CleanRegionRequest(BaseModel):
     image: str = Field(..., description="图片 base64（不含 data: 前缀）")
     mime: str = Field("image/png", description="图片 MIME 类型")
     regions: List[RectRegion] = Field(default_factory=list)
+    strength: Literal["gentle", "standard", "strong"] = "standard"
+    preserveRules: bool = True
 
 
 class CleanRegionResponse(BaseModel):
     image: str
     mime: str
     processed: int
+    changed: bool = True
 
 
 class ExportRequest(BaseModel):

@@ -1,3 +1,5 @@
+import { describeError } from "./errors.js";
+import { appendGlyphs } from "./profileEdits.js";
 /**
  * 手写档案与字形的状态管理 Hook。
  *
@@ -13,7 +15,7 @@ import {
   type HandwritingProfile,
   type HandwritingSampleSet,
 } from "@hw-layout/shared";
-import { ApiError, segmentGlyph } from "./apiClient.js";
+import { segmentGlyph } from "./apiClient.js";
 import { splitDataURL, uid } from "./image.js";
 
 export interface UseHandwritingResult {
@@ -57,7 +59,7 @@ export interface UseHandwritingResult {
 interface UseHandwritingArgs {
   profiles: HandwritingProfile[];
   activeProfileId: string | null;
-  onProfilesChange: (profiles: HandwritingProfile[]) => void;
+  onProfilesChange: (update: (profiles: HandwritingProfile[]) => HandwritingProfile[]) => void;
   onActiveChange: (id: string | null) => void;
 }
 
@@ -74,9 +76,9 @@ export function useHandwriting({
 
   const mutate = useCallback(
     (fn: (list: HandwritingProfile[]) => HandwritingProfile[]) => {
-      onProfilesChange(fn(profiles));
+      onProfilesChange(fn);
     },
-    [profiles, onProfilesChange],
+    [onProfilesChange],
   );
 
   const touch = (p: HandwritingProfile): HandwritingProfile => ({
@@ -201,7 +203,7 @@ export function useHandwriting({
         mutate((list) =>
           list.map((p) =>
             p.id === profileId
-              ? touch({ ...p, glyphs: [...p.glyphs, glyph] })
+              ? touch(appendGlyphs(p, [glyph]))
               : p,
           ),
         );
@@ -272,7 +274,7 @@ export function useHandwriting({
           mutate((list) =>
             list.map((p) =>
               p.id === profileId
-                ? touch({ ...p, glyphs: [...p.glyphs, ...newGlyphs] })
+                ? touch(appendGlyphs(p, newGlyphs))
                 : p,
             ),
           );
@@ -319,23 +321,4 @@ export function useHandwriting({
     searchGlyphs,
     variantsOf,
   };
-}
-
-function describeError(err: unknown): string {
-  if (err instanceof ApiError) {
-    let detail = err.body;
-    try {
-      const j = JSON.parse(err.body);
-      if (j?.detail)
-        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-    } catch {
-      /* keep raw */
-    }
-    return `HTTP ${err.status}: ${detail || err.message}`;
-  }
-  if (err instanceof Error) {
-    if (err.name === "AbortError") return "请求超时，请检查后端是否运行";
-    return err.message;
-  }
-  return String(err);
 }

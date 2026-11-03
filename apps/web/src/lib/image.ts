@@ -8,6 +8,7 @@ export function fileToDataURL(file: File): Promise<string> {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
+    reader.onabort = () => reject(new Error("文件读取已取消"));
     reader.readAsDataURL(file);
   });
 }
@@ -17,8 +18,14 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(e);
+    const timer = setTimeout(() => { img.onload = null; img.onerror = null; img.src = ""; reject(new Error("图片读取超时")); }, 15000);
+    img.onload = () => {
+      clearTimeout(timer);
+      if (img.naturalWidth > 16384 || img.naturalHeight > 16384 || img.naturalWidth * img.naturalHeight > 64_000_000) {
+        reject(new Error("图片尺寸超过当前画布上限（单边 16384 像素、总计 6400 万像素），请缩小后导入"));
+      } else resolve(img);
+    };
+    img.onerror = () => { clearTimeout(timer); reject(new Error("图片无法解码")); };
     img.src = src;
   });
 }
@@ -94,10 +101,16 @@ export function pickFile(accept: string): Promise<File | null> {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = accept;
-    input.onchange = () => {
-      resolve(input.files?.[0] ?? null);
+    input.hidden = true;
+    const finish = (file: File | null) => {
+      input.onchange = null;
+      input.oncancel = null;
+      input.remove();
+      resolve(file);
     };
-    // 取消选择时 onchange 不触发；此处不阻塞，返回 null 由调用方处理
+    input.onchange = () => finish(input.files?.[0] ?? null);
+    input.oncancel = () => finish(null);
+    document.body.appendChild(input);
     input.click();
   });
 }
@@ -108,6 +121,7 @@ export function fileToText(file: File): Promise<string> {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
+    reader.onabort = () => reject(new Error("文件读取已取消"));
     reader.readAsText(file);
   });
 }

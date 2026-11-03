@@ -125,7 +125,7 @@ export async function cleanRegion(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
-  });
+  }, 60000);
 }
 
 export async function exportFile(

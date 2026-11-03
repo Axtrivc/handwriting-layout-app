@@ -6,13 +6,9 @@
  *
  * 图片加载是异步的，本模块所有函数返回 Promise，显式 await image.onload。
  */
-import {
-  collectGlyphKeys,
-  layoutText,
-  type CanvasPage,
-  type HandwritingProfile,
-  type NaturalnessParams,
-} from "@hw-layout/shared";
+import Konva from "konva";
+import { collectGlyphKeys, type CanvasPage, type HandwritingProfile, type NaturalnessParams } from "@hw-layout/shared";
+import { textScene } from "./textScene.js";
 
 /** glyphKey("profileId:glyphId") -> HTMLImageElement 的缓存。 */
 export type GlyphImageStore = Map<string, HTMLImageElement>;
@@ -86,88 +82,36 @@ export async function renderPageOffscreen(
   opts: OffscreenRenderOptions,
 ): Promise<HTMLCanvasElement> {
   const scale = opts.scale ?? 1;
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(page.originalWidth * scale);
-  canvas.height = Math.round(page.originalHeight * scale);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("无法获取 canvas 上下文");
-
-  ctx.scale(scale, scale);
-
-  // 背景
-  if (page.backgroundImage) {
-    const bg = await loadImageEl(page.backgroundImage);
-    ctx.drawImage(bg, 0, 0, page.originalWidth, page.originalHeight);
-  } else {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, page.originalWidth, page.originalHeight);
+  const width = Math.round(page.originalWidth * scale);
+  const height = Math.round(page.originalHeight * scale);
+  if (!Number.isFinite(width * height) || width < 1 || height < 1 ||
+      width > 16384 || height > 16384 || width * height > 64_000_000) {
+    throw new Error("导出尺寸过大或无效，请降低倍率或缩小原图。");
   }
-
-  const profileMap = new Map(opts.profiles.map((p) => [p.id, p]));
-  const glyphStore = opts.glyphStore ?? new Map();
-  const applyJitter = opts.naturalnessEnabled;
-
-  // glyphSize 查询函数（供 layoutText 用）
-  const glyphSize = (key: string) => {
-    const img = glyphStore.get(key);
-    if (!img) return null;
-    return { naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight };
-  };
-
-  // 文本对象按 zIndex 排序
-  const sorted = [...page.textObjects].sort((a, b) => a.zIndex - b.zIndex);
-  for (const obj of sorted) {
-    const pid = obj.handwritingProfileId ?? opts.activeProfileId;
-    const profile = obj.renderMode === "handwritingGlyph" && pid ? (profileMap.get(pid) ?? null) : null;
-
-    const layout = layoutText(obj, {
-      glyphSize,
-      profile,
-      applyJitter,
-      naturalness: opts.naturalness,
-      letterSpacing: obj.style.letterSpacing,
-      exportSeed: opts.exportSeed,
-    });
-
-    // 逐字绘制
-    for (const line of layout.lines) {
-      for (const lg of line.glyphs) {
-        ctx.save();
-        ctx.globalAlpha = lg.opacity;
-        if (lg.isGlyph && lg.glyphKey) {
-          const img = glyphStore.get(lg.glyphKey);
-          if (img) {
-            // 旋转以字中心为轴
-            ctx.translate(lg.x + lg.width / 2, lg.y + lg.height / 2);
-            if (applyJitter && opts.naturalness.rotationJitter > 0) {
-              // 旋转抖动（与 Konva 一致：obj.style.rotation 为基础，这里 glyph 不再加 obj 旋转避免双重）
-            }
-            ctx.drawImage(img, -lg.width / 2, -lg.height / 2, lg.width, lg.height);
-          } else {
-            // glyph 图片缺失，fallback 字体
-            drawFallbackChar(ctx, lg, obj.style);
-          }
-        } else {
-          drawFallbackChar(ctx, lg, obj.style);
-        }
-        ctx.restore();
-      }
+  await document.fonts.ready;
+  const container = document.createElement("div");
+  const stage = new Konva.Stage({ container, width: page.originalWidth, height: page.originalHeight });
+  try {
+    const layer = new Konva.Layer();
+    stage.add(layer);
+    if (page.backgroundImage) layer.add(new Konva.Image({ image: await loadImageEl(page.backgroundImage),
+      width: page.originalWidth, height: page.originalHeight }));
+    else layer.add(new Konva.Rect({ width: page.originalWidth, height: page.originalHeight, fill: "white" }));
+    const profiles = new Map(opts.profiles.map(p => [p.id, p]));
+    const images = opts.glyphStore ?? await preloadPageGlyphs(page, opts.profiles, opts.activeProfileId);
+    for (const obj of [...page.textObjects].sort((a, b) => a.zIndex - b.zIndex)) {
+      const profile = profiles.get(obj.handwritingProfileId ?? opts.activeProfileId ?? "") ?? null;
+      const scene = textScene(obj, profile, images, opts.naturalnessEnabled ? opts.naturalness : undefined, opts.exportSeed);
+      const group = new Konva.Group(scene.transform);
+      for (const node of scene.nodes) group.add(node.kind === 'text' ? new Konva.Text(node.attrs) : new Konva.Image(node.attrs));
+      layer.add(group);
     }
+    layer.draw();
+    return stage.toCanvas({ pixelRatio: scale });
+  } finally {
+    stage.destroy();
+    container.remove();
   }
-
-  return canvas;
-}
-
-/** 用字体绘制单个 fallback 字符。 */
-function drawFallbackChar(
-  ctx: CanvasRenderingContext2D,
-  lg: { ch: string; x: number; y: number; fontSize: number; opacity: number },
-  style: { fontFamily: string; fontWeight: string; fontStyle: string; color: string; rotation: number; blur: number },
-): void {
-  ctx.font = `${style.fontStyle} ${style.fontWeight} ${lg.fontSize}px ${style.fontFamily}`;
-  ctx.fillStyle = style.color;
-  // baseline 对齐：canvas fillText 的 y 是基线位置，近似用 y + fontSize*0.8
-  ctx.fillText(lg.ch, lg.x, lg.y + lg.fontSize * 0.8);
 }
 
 /** 离屏渲染一页为 dataURL。 */

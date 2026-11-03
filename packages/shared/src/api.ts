@@ -17,6 +17,8 @@ export interface CleanRegionRequest {
   mime: string;
   /** 要清理的矩形区域列表（基于原图坐标） */
   regions: RectRegion[];
+  strength?: "gentle" | "standard" | "strong";
+  preserveRules?: boolean;
 }
 
 /** POST /clean-region 响应 */
@@ -27,6 +29,8 @@ export interface CleanRegionResponse {
   mime: string;
   /** 实际处理的区域数 */
   processed: number;
+  /** False when no removable strokes were detected. Optional for older servers. */
+  changed?: boolean;
 }
 
 /** POST /export 请求（预留） */

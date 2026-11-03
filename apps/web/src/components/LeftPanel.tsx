@@ -16,6 +16,15 @@ interface LeftPanelProps {
   cleaning: boolean;
   cleanError: string | null;
   canUndoClean: boolean;
+  cleanStrength: "gentle" | "standard" | "strong";
+  onCleanStrength: (strength: "gentle" | "standard" | "strong") => void;
+  preserveRules: boolean;
+  onPreserveRules: (value: boolean) => void;
+  hasPreview: boolean;
+  compareOriginal: boolean;
+  onCompareOriginal: () => void;
+  onApplyClean: () => void;
+  onCancelClean: () => void;
   onUpload: (file: File) => void;
   onAddText: () => void;
   onSelectText: (id: string) => void;
@@ -37,7 +46,8 @@ export function LeftPanel({
   selections,
   cleaning,
   cleanError,
-  canUndoClean,
+  canUndoClean, cleanStrength, onCleanStrength, preserveRules, onPreserveRules,
+  hasPreview, compareOriginal, onCompareOriginal, onApplyClean, onCancelClean,
   onUpload,
   onAddText,
   onSelectText,
@@ -80,11 +90,31 @@ export function LeftPanel({
       </div>
 
       <p className="panel__title">清除字迹</p>
-      <p className="hint">框选要清理的矩形区域，可多次；选区可拖角调整。</p>
+      <p className="hint">紧贴字迹框选，留少量边距。先预览，满意后应用；可移动选区和拖角调整。</p>
+      <label className="field">
+        清除力度
+        <select value={cleanStrength} disabled={cleaning || hasPreview}
+          onChange={(e) => onCleanStrength(e.target.value as "gentle" | "standard" | "strong")}>
+          <option value="gentle">轻柔（保护纸张细节）</option>
+          <option value="standard">标准</option>
+          <option value="strong">加强（浅色笔迹 / 残留）</option>
+        </select>
+      </label>
+      <label className="toggle">
+        <input type="checkbox" checked={preserveRules} disabled={cleaning || hasPreview}
+          onChange={(e) => onPreserveRules(e.target.checked)} />保留横线
+      </label>
+      {hasPreview && <div role="status">
+        <p className="hint">预览尚未保存。切换原图检查细节，或取消后调整力度。</p>
+        <button className="btn" onClick={onCompareOriginal}>{compareOriginal ? "查看清除效果" : "查看原图"}</button>
+        <button className="btn btn--primary" onClick={onApplyClean}>应用清除</button>
+        <button className="btn" onClick={onCancelClean}>取消预览</button>
+      </div>}
       <label className="toggle">
         <input
           type="checkbox"
           checked={selectMode}
+          disabled={cleaning || hasPreview || !project.backgroundImage}
           onChange={(e) => onToggleSelectMode(e.target.checked)}
         />
         框选模式
@@ -93,15 +123,15 @@ export function LeftPanel({
         <button
           className="btn btn--primary"
           style={{ flex: 1 }}
-          disabled={selections.length === 0 || cleaning}
+          disabled={selections.length === 0 || cleaning || hasPreview || !project.backgroundImage}
           onClick={onClearRegion}
           title={selections.length === 0 ? "请先框选区域" : `清除 ${selections.length} 个区域`}
         >
-          {cleaning ? "处理中…" : `清除字迹 (${selections.length})`}
+          {cleaning ? "处理中…" : `预览清除 (${selections.length})`}
         </button>
         <button
           className="btn"
-          disabled={selections.length === 0}
+          disabled={selections.length === 0 || cleaning || hasPreview}
           onClick={onClearSelections}
           title="清空已框选区域"
         >
@@ -113,7 +143,7 @@ export function LeftPanel({
           className="btn"
           style={{ width: "100%", marginBottom: 8 }}
           onClick={onUndoClean}
-          disabled={cleaning}
+          disabled={cleaning || hasPreview}
           title="撤销最近一次清除，恢复上一张背景"
         >
           ↶ 撤销清除

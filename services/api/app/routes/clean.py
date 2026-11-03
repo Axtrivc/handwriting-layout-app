@@ -6,7 +6,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from .. import __version__
 from ..config import DEFAULT_INPAINT_RADIUS
 from ..schemas import CleanRegionRequest, CleanRegionResponse
 
@@ -49,14 +48,22 @@ def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
     result, processed = clean_regions(
         img,
         regions,
-        options=InpaintOptions(algorithm="ns", radius=DEFAULT_INPAINT_RADIUS),
+        options=InpaintOptions(
+            algorithm="ns", radius=DEFAULT_INPAINT_RADIUS,
+            contrast={"gentle": 22, "standard": 12, "strong": 6}[req.strength],
+            dilate_iterations=2 if req.strength == "strong" else 1,
+            detect_lines=req.preserveRules,
+        ),
     )
     if processed == 0:
         raise HTTPException(status_code=400, detail="没有有效的清理区域")
 
-    out_data = image_to_b64(result, req.mime)
+    # Always return lossless pixels, including when the uploaded scan is JPEG.
+    out_mime = "image/png"
+    out_data = image_to_b64(result, out_mime)
     return CleanRegionResponse(
         image=out_data,
-        mime=req.mime,
+        mime=out_mime,
         processed=processed,
+        changed=result is not img,
     )

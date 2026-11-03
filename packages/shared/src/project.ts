@@ -1,3 +1,4 @@
+import { validateProjectFile } from "./projectValidation.js";
 /**
  * 项目文件的序列化 / 反序列化（多页版）。
  *
@@ -48,6 +49,7 @@ export interface LoadResult {
   ok: boolean;
   project?: CanvasProject;
   error?: string;
+  migrated?: boolean;
 }
 
 /** 生成唯一 id（shared 层不依赖前端的 uid，用简单实现）。 */
@@ -122,6 +124,12 @@ export function deserializeProject(raw: string): LoadResult {
     return { ok: false, error: "项目根结构不是对象" };
   }
 
+  try {
+    validateProjectFile(data);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "项目校验失败" };
+  }
+
   // 判断是新结构（有 pages）还是旧单页结构
   const hasPages = Array.isArray(data.pages) && data.pages.length > 0;
   const hasLegacySingle =
@@ -169,7 +177,7 @@ export function deserializeProject(raw: string): LoadResult {
     updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : now,
   };
 
-  return { ok: true, project };
+  return { ok: true, project, migrated: hasLegacySingle };
 }
 
 /** 规范化 pages 数组。 */
@@ -185,7 +193,7 @@ function normalizePage(p: Record<string, unknown>, idx: number): CanvasPage {
   return {
     id: typeof p.id === "string" ? p.id : uid("page"),
     name: typeof p.name === "string" ? p.name : `第 ${idx + 1} 页`,
-    index: typeof p.index === "number" ? p.index : idx,
+    index: idx,
     backgroundImage: hasBg ? (p.backgroundImage as string) : null,
     originalWidth:
       typeof p.originalWidth === "number"
@@ -308,17 +316,25 @@ function normalizeProfiles(raw: unknown[]): HandwritingProfile[] {
 }
 
 function normalizeProfile(p: Record<string, unknown>): HandwritingProfile {
+  const id = strOr(p.id, uid("profile"));
   return {
-    id: strOr(p.id, `profile-${Math.random().toString(36).slice(2, 8)}`),
-    name: strOr(p.name, "未命名档案"),
-    createdAt: strOr(p.createdAt, nowISO()),
-    updatedAt: strOr(p.updatedAt, nowISO()),
+    id, name: strOr(p.name, "未命名档案"),
+    createdAt: strOr(p.createdAt, nowISO()), updatedAt: strOr(p.updatedAt, nowISO()),
     description: typeof p.description === "string" ? p.description : undefined,
-    sampleSets: Array.isArray(p.sampleSets) ? (p.sampleSets as HandwritingProfile["sampleSets"]) : [],
-    glyphs: Array.isArray(p.glyphs) ? (p.glyphs as HandwritingProfile["glyphs"]) : [],
-    defaultRenderSettings: normalizeRenderSettings(
-      (p.defaultRenderSettings ?? {}) as Record<string, unknown>,
-    ),
+    sampleSets: ((p.sampleSets ?? []) as Record<string, unknown>[]).map(sample => ({
+      id: sample.id as string, profileId: id, name: strOr(sample.name, "样本图"),
+      imageBase64: sample.imageBase64 as string, sourceImageWidth: sample.sourceImageWidth as number,
+      sourceImageHeight: sample.sourceImageHeight as number, createdAt: strOr(sample.createdAt, nowISO()),
+      status: (sample.status ?? "imported") as "imported" | "segmented" | "reviewed",
+    })),
+    glyphs: ((p.glyphs ?? []) as Record<string, unknown>[]).map(glyph => ({
+      id: glyph.id as string, profileId: id, char: glyph.char as string, imageBase64: glyph.imageBase64 as string,
+      bbox: glyph.bbox as RectRegion, sourceSampleSetId: glyph.sourceSampleSetId as string,
+      variantIndex: numOr(glyph.variantIndex, 0), createdAt: strOr(glyph.createdAt, nowISO()),
+      ...(glyph.tags === undefined ? {} : { tags: glyph.tags as string[] }),
+      ...(glyph.qualityScore === undefined ? {} : { qualityScore: glyph.qualityScore as number }),
+    })),
+    defaultRenderSettings: normalizeRenderSettings((p.defaultRenderSettings ?? {}) as Record<string, unknown>),
   };
 }
 
@@ -352,10 +368,10 @@ export function isRectRegion(v: unknown): v is RectRegion {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
   return (
-    typeof r.x === "number" &&
-    typeof r.y === "number" &&
-    typeof r.width === "number" &&
-    typeof r.height === "number"
+    typeof r.x === "number" && Number.isFinite(r.x) && r.x >= 0 &&
+    typeof r.y === "number" && Number.isFinite(r.y) && r.y >= 0 &&
+    typeof r.width === "number" && Number.isFinite(r.width) && r.width > 0 &&
+    typeof r.height === "number" && Number.isFinite(r.height) && r.height > 0
   );
 }
 

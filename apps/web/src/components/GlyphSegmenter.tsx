@@ -1,3 +1,5 @@
+import { planGlyphBatch } from "../lib/glyphBatch.js";
+import { clipSelection } from "../lib/cleanSelection.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type Konva from "konva";
 import { Stage, Layer, Image as KonvaImage, Rect, Label, Tag, Text, Group } from "react-konva";
@@ -39,10 +41,10 @@ interface GlyphSegmenterProps {
   profile: HandwritingProfile;
   sampleSet: HandwritingSampleSet;
   image: HTMLImageElement | null;
-  onSaveGlyph: (char: string, bbox: GlyphBoundingBox) => Promise<void>;
+  onSaveGlyph: (char: string, bbox: GlyphBoundingBox) => Promise<boolean>;
   onBatchSaveGlyphs: (
     items: { char: string; bbox: GlyphBoundingBox }[],
-  ) => Promise<{ saved: number; skipped: number }>;
+  ) => Promise<{ saved: number; skipped: number; error?: string }>;
   onDeleteGlyph: (glyphId: string) => void;
   saving: boolean;
   error: string | null;
@@ -85,6 +87,7 @@ export function GlyphSegmenter({
   ocrStatus,
   ocrLoading,
 }: GlyphSegmenterProps) {
+  const pending = useRef(false);
   const stageRef = useRef<Konva.Stage>(null);
   const [cands, setCands] = useState<CandBox[]>([]);
   const [candLabels, setCandLabels] = useState<Map<string, CandLabel>>(new Map());
@@ -113,16 +116,9 @@ export function GlyphSegmenter({
     width: b.width * scale,
     height: b.height * scale,
   });
-  const toOriginal = (d: { x: number; y: number; w: number; h: number }): GlyphBoundingBox => ({
-    x: Math.round(d.x / scale),
-    y: Math.round(d.y / scale),
-    width: Math.round(d.w / scale),
-    height: Math.round(d.h / scale),
-  });
-  const activeDraftBbox = draft && draft.w >= 6 && draft.h >= 6 ? toOriginal(draft) : null;
-
   // ===== 鼠标交互 =====
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (pending.current || saving || detecting || ocrLoading) return;
     const stage = e.target.getStage();
     const pos = stage?.getPointerPosition();
     if (!pos) return;
@@ -147,13 +143,11 @@ export function GlyphSegmenter({
     });
   };
   const onMouseUp = () => {
-    if (draft && draft.w >= 6 && draft.h >= 6) {
+    const clipped = draft && image ? clipSelection({ x: draft.x / scale, y: draft.y / scale, width: draft.w / scale, height: draft.h / scale }, image.naturalWidth, image.naturalHeight) : null;
+    if (draft && draft.w >= 6 && draft.h >= 6 && clipped) {
       const newCand: CandBox = {
         id: `c-${Date.now()}`,
-        x: Math.round(draft.x / scale),
-        y: Math.round(draft.y / scale),
-        width: Math.round(draft.w / scale),
-        height: Math.round(draft.h / scale),
+        ...clipped,
         rowIndex: 0,
         orderIndex: cands.length,
       };
@@ -166,6 +160,9 @@ export function GlyphSegmenter({
 
   // ===== 自动检测 =====
   const handleDetect = async () => {
+    if (pending.current || saving || detecting || ocrLoading) return;
+    if (candLabels.size && !window.confirm("重新检测会替换当前候选和标注，是否继续？")) return;
+    pending.current = true;
     try {
       const result = await onDetect(sampleSet.imageBase64);
       setCands(
@@ -181,35 +178,40 @@ export function GlyphSegmenter({
       setBatchMsg(null);
     } catch {
       /* 错误由上层 error 显示 */
-    }
+    } finally { pending.current = false; }
   };
 
   // ===== OCR 辅助识别 =====
   const handleOcrSuggest = async () => {
-    if (cands.length === 0) return;
-    const res = await onSuggestLabels(sampleSet.imageBase64, cands);
-    if (res.status !== "ok") return;
-    const sorted = [...cands].sort(
-      (a, b) => a.rowIndex - b.rowIndex || a.orderIndex - b.orderIndex,
-    );
-    const newOcr = new Map<string, CandOcr>();
-    res.candidates.forEach((c, i) => {
-      const cand = sorted[i];
-      if (cand) {
-        newOcr.set(cand.id, {
-          char: c.text,
-          confidence: c.confidence,
-          level: classifyConfidence(c.confidence),
-          provider: c.provider,
-        });
-      }
-    });
-    setCandOcr(newOcr);
-    setBatchMsg(`OCR 返回 ${res.candidates.length} 个建议（高置信度可一键应用）`);
+    if (!cands.length || pending.current || saving || detecting || ocrLoading) return;
+    pending.current = true;
+    try {
+      const sorted = [...cands].sort(
+        (a, b) => a.rowIndex - b.rowIndex || a.orderIndex - b.orderIndex,
+      );
+      const res = await onSuggestLabels(sampleSet.imageBase64, sorted);
+      if (res.status !== "ok") return;
+      const newOcr = new Map<string, CandOcr>();
+      res.candidates.forEach((c, i) => {
+        const cand = sorted[i];
+        if (cand) {
+          newOcr.set(cand.id, {
+            char: c.text,
+            confidence: c.confidence,
+            level: classifyConfidence(c.confidence),
+            provider: c.provider,
+          });
+        }
+      });
+      setCandOcr(newOcr);
+      setBatchMsg(`OCR 返回 ${res.candidates.length} 个建议（高置信度可一键应用）`);
+    } catch { setBatchMsg("OCR 识别失败，已有标注已保留。"); }
+    finally { pending.current = false; }
   };
 
   // 应用高置信度建议（>=0.85）
   const handleApplyHighConf = () => {
+    if (pending.current || saving || detecting || ocrLoading) return;
     const newLabels = new Map(candLabels);
     let count = 0;
     for (const [id, ocr] of candOcr) {
@@ -229,6 +231,7 @@ export function GlyphSegmenter({
 
   // ===== 标签操作 =====
   const setLabel = (id: string, char: string) => {
+    if (pending.current) return;
     setCandLabels((prev) => {
       const next = new Map(prev);
       if (char) next.set(id, { char });
@@ -238,79 +241,51 @@ export function GlyphSegmenter({
   };
 
   const handleSaveSelected = async () => {
-    const c = cands.find((x) => x.id === selectedCandId);
-    const label = selectedCandId ? candLabels.get(selectedCandId)?.char : "";
-    const char = label || "";
-    if (activeDraftBbox && char) {
-      await onSaveGlyph(char, activeDraftBbox);
-      setDraft(null);
-      return;
-    }
-    if (!c || !char) return;
-    await onSaveGlyph(char, { x: c.x, y: c.y, width: c.width, height: c.height });
-    setCands((prev) => prev.filter((x) => x.id !== c.id));
-    setCandLabels((prev) => {
-      const next = new Map(prev);
-      next.delete(c.id);
-      return next;
-    });
-    // 自动跳到下一个
-    if (autoAdvance) {
-      const idx = cands.findIndex((x) => x.id === c.id);
-      const next = cands[idx + 1];
-      if (next) setSelectedCandId(next.id);
-    }
+    if (pending.current || saving || detecting || ocrLoading) return;
+    const candidate = cands.find(c => c.id === selectedCandId);
+    const char = selectedCandId ? candLabels.get(selectedCandId)?.char.trim() : "";
+    if (!candidate || !char) return;
+    pending.current = true;
+    try {
+      const saved = await onSaveGlyph(char, { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height });
+      if (!saved) return;
+      setCands(prev => prev.filter(c => c.id !== candidate.id));
+      setCandLabels(prev => { const next = new Map(prev); next.delete(candidate.id); return next; });
+      setCandOcr(prev => { const next = new Map(prev); next.delete(candidate.id); return next; });
+      const remaining = cands.filter(c => c.id !== candidate.id);
+      const index = cands.findIndex(c => c.id === candidate.id);
+      setSelectedCandId(autoAdvance ? (remaining[Math.min(index, remaining.length - 1)]?.id ?? null) : null);
+    } catch {
+      setSaveSummary("保存失败，候选和标注已保留，可重试。");
+    } finally { pending.current = false; }
   };
 
-  // ===== 批量保存（含 OCR 建议或手动批量文本）=====
   const handleBatchSave = async () => {
-    const sorted = [...cands].sort(
-      (a, b) => a.rowIndex - b.rowIndex || a.orderIndex - b.orderIndex,
-    );
-    // 优先用 batchText，否则用各候选的 label
-    const items: { char: string; bbox: GlyphBoundingBox }[] = [];
-    let emptyCount = 0;
-    let lowConfCount = 0;
-    if (batchText.trim()) {
-      const chars = Array.from(batchText);
-      for (let i = 0; i < sorted.length && i < chars.length; i++) {
-        const ch = chars[i].trim();
-        if (!ch) {
-          emptyCount++;
-          continue;
-        }
-        items.push({ char: ch, bbox: { x: sorted[i].x, y: sorted[i].y, width: sorted[i].width, height: sorted[i].height } });
+    if (pending.current || saving || detecting || ocrLoading) return;
+    const plan = planGlyphBatch(cands, candLabels, batchText);
+    if (!plan.length) { setSaveSummary("没有可保存的字符（全部为空）"); return; }
+    if (!window.confirm(`将保存 ${plan.length} 个字形，未标注的候选将保留。\n\n是否继续？`)) return;
+    pending.current = true;
+    try {
+      const result = await onBatchSaveGlyphs(plan.map(({ char, bbox }) => ({ char, bbox })));
+      // The service commits the entire batch only after every request succeeds.
+      if (result.error || result.saved !== plan.length) {
+        setSaveSummary(result.error ?? "保存未完成，候选和标注已保留。");
+        return;
       }
-    } else {
-      for (const c of sorted) {
-        const label = candLabels.get(c.id)?.char ?? "";
-        const ocr = candOcr.get(c.id);
-        if (!label) {
-          emptyCount++;
-          continue;
-        }
-        if (ocr && ocr.level === "low") lowConfCount++;
-        items.push({ char: label, bbox: { x: c.x, y: c.y, width: c.width, height: c.height } });
-      }
-    }
-
-    if (items.length === 0) {
-      setSaveSummary("没有可保存的字符（全部为空）");
-      return;
-    }
-    // 保存前摘要
-    const summary = `将保存 ${items.length} 个字形\n空字符：${emptyCount}\n低置信度：${lowConfCount}`;
-    if (!window.confirm(`${summary}\n\n是否继续？`)) return;
-
-    const result = await onBatchSaveGlyphs(items);
-    // 移除已保存
-    const usedIds = new Set(sorted.slice(0, items.length + emptyCount).map((c) => c.id));
-    setCands((prev) => prev.filter((c) => !usedIds.has(c.id)));
-    setSaveSummary(`保存成功 ${result.saved} 个${result.skipped > 0 ? `，跳过 ${result.skipped}` : ""}`);
-    setBatchText("");
+      const usedIds = new Set(plan.map(item => item.candidateId));
+      setCands(prev => prev.filter(c => !usedIds.has(c.id)));
+      setCandLabels(prev => new Map([...prev].filter(([id]) => !usedIds.has(id))));
+      setCandOcr(prev => new Map([...prev].filter(([id]) => !usedIds.has(id))));
+      if (selectedCandId && usedIds.has(selectedCandId)) setSelectedCandId(null);
+      setSaveSummary(`保存成功 ${result.saved} 个，未标注候选已保留`);
+      setBatchText("");
+    } catch { setSaveSummary("保存失败，候选和标注已保留，可重试。"); }
+    finally { pending.current = false; }
   };
 
   const handleDeleteCand = (id: string) => {
+    if (pending.current || saving || detecting || ocrLoading) return;
     setCands((prev) => prev.filter((c) => c.id !== id));
     setCandLabels((prev) => {
       const next = new Map(prev);
@@ -424,9 +399,10 @@ export function GlyphSegmenter({
                           strokeWidth={isSel ? 2 : 1.2}
                           dash={isSel ? [] : [4, 3]}
                           fill={isSel ? "rgba(26,162,96,0.12)" : "rgba(47,109,246,0.05)"}
-                          draggable
+                          draggable={!saving && !detecting && !ocrLoading}
+                          dragBoundFunc={pos => ({ x: Math.max(0, Math.min(dispW - d.width, pos.x)), y: Math.max(0, Math.min(dispH - d.height, pos.y)) })}
                           onDragEnd={(e) => {
-                            setCands((prev) => prev.map((cc) => cc.id === c.id ? { ...cc, x: e.target.x() / scale, y: e.target.y() / scale } : cc));
+                            setCands((prev) => prev.map((cc) => cc.id === c.id ? { ...cc, x: Math.round(e.target.x() / scale), y: Math.round(e.target.y() / scale) } : cc));
                           }}
                           onTransformEnd={(e) => {
                             const node = e.target as Konva.Rect;
@@ -463,18 +439,18 @@ export function GlyphSegmenter({
 
           <div className="seg-side">
             <div className="seg-detect">
-              <button className="btn btn--primary" style={{ width: "100%", marginBottom: 6 }} disabled={!image || detecting} onClick={handleDetect}>
+              <button className="btn btn--primary" style={{ width: "100%", marginBottom: 6 }} disabled={!image || detecting || saving || ocrLoading} onClick={handleDetect}>
                 {detecting ? "检测中…" : "🔍 自动检测字形区域"}
               </button>
-              <button className="btn" style={{ width: "100%", marginBottom: 6 }} disabled={cands.length === 0} onClick={() => setCands([])}>
+              <button className="btn" style={{ width: "100%", marginBottom: 6 }} disabled={cands.length === 0 || saving || detecting || ocrLoading} onClick={() => { setCands([]); setCandLabels(new Map()); setCandOcr(new Map()); setSelectedCandId(null); }}>
                 清空候选框
               </button>
-              <button className="btn" style={{ width: "100%", marginBottom: 6 }} disabled={!ocrAvailable || cands.length === 0 || ocrLoading} onClick={handleOcrSuggest} title={ocrAvailable ? "对候选框逐个 OCR" : "OCR 未启用"}>
+              <button className="btn" style={{ width: "100%", marginBottom: 6 }} disabled={!ocrAvailable || cands.length === 0 || ocrLoading || saving || detecting} onClick={handleOcrSuggest} title={ocrAvailable ? "对候选框逐个 OCR" : "OCR 未启用"}>
                 {ocrLoading ? "OCR 识别中…" : "🔤 OCR 辅助识别"}
               </button>
               {ocrAvailable && candOcr.size > 0 && (
                 <>
-                  <button className="btn" style={{ width: "100%", marginBottom: 6 }} onClick={handleApplyHighConf}>
+                  <button className="btn" style={{ width: "100%", marginBottom: 6 }} disabled={saving || detecting || ocrLoading} onClick={handleApplyHighConf}>
                     ✅ 应用高置信度建议
                   </button>
                   <button className="btn" style={{ width: "100%", marginBottom: 6 }} onClick={clearOcr}>
@@ -501,6 +477,7 @@ export function GlyphSegmenter({
                 </label>
                 <input
                   type="text"
+                  disabled={saving || detecting || ocrLoading}
                   value={selectedLabel}
                   onChange={(e) => selectedCandId && setLabel(selectedCandId, e.target.value)}
                   placeholder="输入字符"
@@ -512,15 +489,15 @@ export function GlyphSegmenter({
                 <input type="checkbox" checked={autoAdvance} onChange={(e) => setAutoAdvance(e.target.checked)} />
                 保存后自动跳下一个
               </label>
-              <button className="btn btn--primary" style={{ width: "100%" }} disabled={!selectedCandId || !selectedLabel || saving} onClick={handleSaveSelected}>
+              <button className="btn btn--primary" style={{ width: "100%" }} disabled={!selectedCandId || !selectedLabel || saving || detecting || ocrLoading} onClick={handleSaveSelected}>
                 {saving ? "保存中…" : "保存选中 (Enter)"}
               </button>
 
               <div className="field" style={{ marginTop: 10 }}>
                 <label>批量标注（按阅读顺序匹配）</label>
-                <textarea value={batchText} onChange={(e) => setBatchText(e.target.value)} placeholder="如：的一是在不了有" rows={2} />
+                <textarea disabled={saving || detecting || ocrLoading} value={batchText} onChange={(e) => setBatchText(e.target.value)} placeholder="如：的一是在不了有" rows={2} />
               </div>
-              <button className="btn" style={{ width: "100%" }} disabled={cands.length === 0 || saving} onClick={handleBatchSave}>
+              <button className="btn" style={{ width: "100%" }} disabled={cands.length === 0 || saving || detecting || ocrLoading} onClick={handleBatchSave}>
                 批量保存（用上方文本或各候选标签）
               </button>
               {batchMsg && <p className="hint" style={{ marginTop: 6 }}>{batchMsg}</p>}
