@@ -40,6 +40,7 @@ def detect_glyph_candidates(
         raise HTTPException(status_code=400, detail=f"图片解码失败: {exc}") from exc
 
     params = DetectParams(
+        threshold_mode=req.thresholdMode,
         threshold=req.threshold if req.threshold is not None else 180,
         min_width=req.minWidth if req.minWidth is not None else 8,
         min_height=req.minHeight if req.minHeight is not None else 8,

@@ -59,6 +59,7 @@ class SegmentGlyphRequest(BaseModel):
     threshold: bool = False
     thresholdValue: int = Field(180, ge=0, le=255)
     transparent: bool = False
+    backgroundMode: Literal["fixed", "adaptive"] = "fixed"
     normalizeSize: int = Field(0, ge=0, description="归一化边长，0 不归一化")
 
 
@@ -72,6 +73,7 @@ class SegmentGlyphResponse(BaseModel):
 class DetectGlyphCandidatesRequest(BaseModel):
     image: str = Field(..., description="样本图 base64（不含 data: 前缀）")
     mime: str = Field("image/png")
+    thresholdMode: Literal["fixed", "adaptive"] = "fixed"
     threshold: int | None = Field(None, ge=0, le=255)
     minWidth: int | None = Field(None, ge=1)
     minHeight: int | None = Field(None, ge=1)

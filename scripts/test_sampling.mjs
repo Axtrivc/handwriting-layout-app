@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import { COMMON_SAMPLE_CHARACTERS, STARTER_SAMPLE_CHARACTERS } from '../packages/shared/dist/index.js';
+import { collectSampleCharacters, renderSampleSheet, samplePageLabels } from '../apps/web/src/lib/sampleSheet.ts';
+
+assert.equal(new Set(COMMON_SAMPLE_CHARACTERS).size, 2500);
+assert.equal(new Set(STARTER_SAMPLE_CHARACTERS).size, 500);
+assert.deepEqual(collectSampleCharacters('甲甲 乙\n𠮷\t😀\u0000\u200b', new Set(['乙'])), ['甲', '𠮷', '😀']);
+assert.deepEqual(collectSampleCharacters('甲甲', new Set(['甲'])), []);
+assert.deepEqual(samplePageLabels([]), []);
+const chars = collectSampleCharacters(STARTER_SAMPLE_CHARACTERS);
+const labels = samplePageLabels(chars);
+assert.equal(labels.length, 11);
+assert.equal(Array.from(labels.at(-1)).length, 20);
+assert.equal(labels.join(''), STARTER_SAMPLE_CHARACTERS, 'print pagination must preserve label order');
+const html = renderSampleSheet(chars, '<script>alert(1)</script> & 档案');
+assert.ok(html.includes('&lt;script&gt;'));
+assert.ok(!html.includes('<script>'));
+assert.equal((html.match(/class="page"/g) ?? []).length, 11);
+assert.equal((html.match(/class="cell"><\/div>/g) ?? []).length, 500, 'writing cells contain no reference text');
+assert.ok(!html.includes('80%'));
+assert.ok(!renderSampleSheet(['<', '&', '>'], 'test').includes('<　&'));
+console.log('PASS: sampling list counts, missing characters, Unicode, blank writing cells, escaped HTML and 48-character pagination');

@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { profileCoverage, type HandwritingProfile } from "@hw-layout/shared";
+import { SampleSheet } from './SampleSheet.js';
 
 interface ProfileManagerProps {
   profiles: HandwritingProfile[];
   activeProfileId: string | null;
+  projectText: string;
   onCreate: (name: string, description?: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
@@ -18,6 +20,7 @@ interface ProfileManagerProps {
 export function ProfileManager({
   profiles,
   activeProfileId,
+  projectText,
   onCreate,
   onRename,
   onDelete,
@@ -146,6 +149,8 @@ export function ProfileManager({
                       }}
                     />
                   </label>
+
+                  <SampleSheet key={p.id} profile={p} projectText={projectText} />
 
                   {p.sampleSets.map((s) => (
                     <div key={s.id} className="hw-sample">

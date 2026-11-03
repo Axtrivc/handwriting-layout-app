@@ -49,6 +49,7 @@ def segment_glyph(req: SegmentGlyphRequest) -> SegmentGlyphResponse:
         threshold=req.threshold,
         threshold_value=req.thresholdValue,
         transparent=req.transparent,
+        background_mode=req.backgroundMode,
     )
 
     try:

@@ -41,15 +41,16 @@ interface GlyphSegmenterProps {
   profile: HandwritingProfile;
   sampleSet: HandwritingSampleSet;
   image: HTMLImageElement | null;
-  onSaveGlyph: (char: string, bbox: GlyphBoundingBox) => Promise<boolean>;
+  onSaveGlyph: (char: string, bbox: GlyphBoundingBox, backgroundMode: "fixed" | "adaptive") => Promise<boolean>;
   onBatchSaveGlyphs: (
     items: { char: string; bbox: GlyphBoundingBox }[],
+    backgroundMode: "fixed" | "adaptive",
   ) => Promise<{ saved: number; skipped: number; error?: string }>;
   onDeleteGlyph: (glyphId: string) => void;
   saving: boolean;
   error: string | null;
   onClose: () => void;
-  onDetect: (sampleDataURL: string) => Promise<GlyphCandidate[]>;
+  onDetect: (sampleDataURL: string, thresholdMode: "fixed" | "adaptive") => Promise<GlyphCandidate[]>;
   detecting: boolean;
   /** OCR 辅助：对候选框批量识别 */
   onSuggestLabels: (
@@ -101,6 +102,7 @@ export function GlyphSegmenter({
   const [batchMsg, setBatchMsg] = useState<string | null>(null);
   const [saveSummary, setSaveSummary] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [photoMode, setPhotoMode] = useState(false);
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
   const ocrAvailable = ocrStatus?.status === "ok";
@@ -164,7 +166,7 @@ export function GlyphSegmenter({
     if (candLabels.size && !window.confirm("重新检测会替换当前候选和标注，是否继续？")) return;
     pending.current = true;
     try {
-      const result = await onDetect(sampleSet.imageBase64);
+      const result = await onDetect(sampleSet.imageBase64, photoMode ? "adaptive" : "fixed");
       setCands(
         result.map((c, i) => ({
           id: `d-${i}-${Date.now()}`,
@@ -247,7 +249,7 @@ export function GlyphSegmenter({
     if (!candidate || !char) return;
     pending.current = true;
     try {
-      const saved = await onSaveGlyph(char, { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height });
+      const saved = await onSaveGlyph(char, { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height }, photoMode ? "adaptive" : "fixed");
       if (!saved) return;
       setCands(prev => prev.filter(c => c.id !== candidate.id));
       setCandLabels(prev => { const next = new Map(prev); next.delete(candidate.id); return next; });
@@ -267,7 +269,7 @@ export function GlyphSegmenter({
     if (!window.confirm(`将保存 ${plan.length} 个字形，未标注的候选将保留。\n\n是否继续？`)) return;
     pending.current = true;
     try {
-      const result = await onBatchSaveGlyphs(plan.map(({ char, bbox }) => ({ char, bbox })));
+      const result = await onBatchSaveGlyphs(plan.map(({ char, bbox }) => ({ char, bbox })), photoMode ? "adaptive" : "fixed");
       // The service commits the entire batch only after every request succeeds.
       if (result.error || result.saved !== plan.length) {
         setSaveSummary(result.error ?? "保存未完成，候选和标注已保留。");
@@ -439,6 +441,11 @@ export function GlyphSegmenter({
 
           <div className="seg-side">
             <div className="seg-detect">
+              <label className="toggle" style={{ marginBottom: 6 }}>
+                <input type="checkbox" checked={photoMode} disabled={saving || detecting || ocrLoading}
+                  onChange={e => setPhotoMode(e.target.checked)} />
+                拍照模式（检测并去除纸面阴影）
+              </label>
               <button className="btn btn--primary" style={{ width: "100%", marginBottom: 6 }} disabled={!image || detecting || saving || ocrLoading} onClick={handleDetect}>
                 {detecting ? "检测中…" : "🔍 自动检测字形区域"}
               </button>

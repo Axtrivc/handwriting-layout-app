@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -50,10 +50,28 @@ class DetectParams:
     merge_kernel: int = 15
     # 行聚类容忍（行中心 y 差小于此值视为同一行）
     row_tolerance: int = 20
+    # Keep the fixed mode as the default for existing callers/scanned pages.
+    threshold_mode: str = "fixed"
 
 
 def _to_gray(img: Image.Image) -> np.ndarray:
-    return np.array(img.convert("L"))
+    # Transparent scans should have a paper background, not opaque black RGB.
+    rgba = img.convert("RGBA")
+    paper = Image.new("RGBA", img.size, "white")
+    return np.array(Image.alpha_composite(paper, rgba).convert("L"))
+
+
+def _foreground(gray: np.ndarray, mode: str, threshold: int) -> np.ndarray:
+    if mode == "fixed":
+        return cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)[1]
+    if mode != "adaptive":
+        raise ValueError(f"Unknown threshold mode: {mode}")
+    # CLAHE + local MEAN threshold (not Sauvola). A mild blur reduces camera
+    # noise before contrast enhancement; it must not erase narrow strokes.
+    smooth = cv2.GaussianBlur(gray, (3, 3), 0)
+    enhanced = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(16, 16)).apply(smooth)
+    return cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                 cv2.THRESH_BINARY_INV, blockSize=41, C=15)
 
 
 def detect_glyph_candidates(
@@ -72,17 +90,20 @@ def detect_glyph_candidates(
     gray = _to_gray(img)
 
     # 二值化：前景 mask（笔画为 255）
-    _, mask = cv2.threshold(gray, p.threshold, 255, cv2.THRESH_BINARY_INV)
+    mask = _foreground(gray, p.threshold_mode, p.threshold)
 
     if p.merge_nearby and p.merge_kernel > 0:
         # 形态学膨胀，把同一字内的笔画断片合并成一个块
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT, (p.merge_kernel, p.merge_kernel)
-        )
+        # A 15px horizontal close joins adjacent photographed characters.
+        size = min(5, p.merge_kernel) if p.threshold_mode == "adaptive" else p.merge_kernel
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        if p.threshold_mode == "adaptive":
+            mask = cv2.dilate(mask, cv2.getStructuringElement(
+                cv2.MORPH_RECT, (1, max(3, p.merge_kernel // 5))), iterations=1)
 
     # 连通域
-    num, _labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    num, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
     h, w = gray.shape[:2]
     total_area = max(1, w * h)
 

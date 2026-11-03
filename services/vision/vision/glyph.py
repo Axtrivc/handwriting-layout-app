@@ -10,6 +10,7 @@ import io
 from dataclasses import dataclass
 
 import numpy as np
+import cv2
 from PIL import Image
 
 from .regions import RectRegion
@@ -46,6 +47,8 @@ def trim_whitespace(
     gray = np.array(img.convert("L"))
     # 前景 = 灰度小于阈值（深色笔画）
     mask = gray < threshold
+    if "A" in img.getbands():
+        mask &= np.array(img.getchannel("A")) > 0
     if not mask.any():
         # 整图都是背景，原样返回
         return img
@@ -70,7 +73,7 @@ def normalize_glyph_size(
     """等比缩放并居中填充到 target_size × target_size 的方形画布。"""
     if target_size <= 0:
         return img
-    src = img.convert("RGBA") if img.mode == "RGBA" else img.convert("RGB")
+    src = img.convert("RGBA") if img.mode == "RGBA" or len(pad_color) == 4 else img.convert("RGB")
     w, h = src.size
     scale = min(target_size / w, target_size / h)
     new_w = max(1, int(round(w * scale)))
@@ -89,7 +92,10 @@ def apply_threshold(img: Image.Image, value: int = 180) -> Image.Image:
     gray = img.convert("L")
     arr = np.array(gray)
     bin_arr = np.where(arr < value, 0, 255).astype(np.uint8)
-    return Image.fromarray(bin_arr).convert("RGB")
+    result = Image.fromarray(bin_arr).convert("RGB")
+    if "A" in img.getbands():
+        result.putalpha(img.getchannel("A"))
+    return result
 
 
 def make_transparent(img: Image.Image, threshold: int = 200) -> Image.Image:
@@ -104,8 +110,35 @@ def make_transparent(img: Image.Image, threshold: int = 200) -> Image.Image:
     alpha = (255 - gray).astype(np.uint8)
     # 低于 threshold 视为纯背景，完全透明
     alpha = np.where(gray >= threshold, 0, alpha)
-    arr[:, :, 3] = alpha
+    arr[:, :, 3] = np.minimum(alpha, arr[:, :, 3])
     return Image.fromarray(arr)
+
+
+def extract_photo_glyph(img: Image.Image, region: RectRegion) -> Image.Image:
+    """Estimate paper around the crop; remove illumination without a gray box.
+
+    Derive coverage from local color contrast and unmix the paper color. Keep
+    colored strokes and existing alpha. Only a crop plus 32px context is processed.
+    """
+    r = region.clip_to(*img.size)
+    if not r.is_valid():
+        raise ValueError(f"无效的裁剪区域: {region}")
+    x0, y0 = max(0, r.x - 32), max(0, r.y - 32)
+    x1, y1 = min(img.width, r.x + r.width + 32), min(img.height, r.y + r.height + 32)
+    rgba = img.crop((x0, y0, x1, y1)).convert("RGBA")
+    original_alpha = np.asarray(rgba.getchannel("A"), dtype=np.float32) / 255
+    rgb = np.array(Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert("RGB"))
+    paper = cv2.morphologyEx(rgb, cv2.MORPH_CLOSE,
+                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))).astype(np.float32)
+    pixels = rgb.astype(np.float32)
+    deficit = np.maximum(paper - pixels, 0)
+    alpha = np.max(deficit / np.maximum(paper, 1), axis=2)
+    alpha[np.max(deficit, axis=2) < 12] = 0
+    alpha = np.minimum(alpha, original_alpha)
+    color = (pixels - paper * (1 - alpha[:, :, None])) / np.maximum(alpha[:, :, None], 1e-6)
+    color[alpha == 0] = 0
+    out = np.dstack((np.clip(color, 0, 255), alpha * 255)).round().astype(np.uint8)
+    return Image.fromarray(out).crop((r.x - x0, r.y - y0, r.x - x0 + r.width, r.y - y0 + r.height))
 
 
 @dataclass
@@ -117,13 +150,16 @@ class GlyphProcessOptions:
     threshold: bool = False
     threshold_value: int = 180
     transparent: bool = False
+    background_mode: str = "fixed"
 
 
 def process_glyph(
     img: Image.Image, region: RectRegion, opts: GlyphProcessOptions
 ) -> GlyphOutput:
     """完整的字形处理流水线：裁剪 -> (去白边) -> (二值化) -> (归一化) -> (透明)。"""
-    out = crop_glyph(img, region)
+    if opts.background_mode not in ("fixed", "adaptive"):
+        raise ValueError(f"Unknown background mode: {opts.background_mode}")
+    out = extract_photo_glyph(img, region) if opts.background_mode == "adaptive" else crop_glyph(img, region)
 
     if opts.trim:
         out = trim_whitespace(out)
@@ -135,8 +171,10 @@ def process_glyph(
         pad = (0, 0, 0, 0) if opts.transparent else (255, 255, 255)
         out = normalize_glyph_size(out, opts.normalize_size, pad_color=pad)
 
-    if opts.transparent:
+    if opts.transparent and opts.background_mode == "fixed":
         out = make_transparent(out)
+    elif not opts.transparent and opts.background_mode == "adaptive":
+        out = Image.alpha_composite(Image.new("RGBA", out.size, "white"), out.convert("RGBA")).convert("RGB")
 
     return GlyphOutput(image=out, width=out.size[0], height=out.size[1])
 

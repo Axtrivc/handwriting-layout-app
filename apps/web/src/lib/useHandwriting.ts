@@ -41,6 +41,7 @@ export interface UseHandwritingResult {
     char: string,
     bbox: GlyphBoundingBox,
     sampleDataURL: string,
+    backgroundMode?: "fixed" | "adaptive",
   ) => Promise<{ ok: true; glyph: HandwritingGlyph } | { ok: false; error: string }>;
   /** 批量保存多个字形，返回成功/跳过数 */
   batchSaveGlyphs: (
@@ -48,6 +49,7 @@ export interface UseHandwritingResult {
     sampleSetId: string,
     items: { char: string; bbox: GlyphBoundingBox }[],
     sampleDataURL: string,
+    backgroundMode?: "fixed" | "adaptive",
   ) => Promise<{ saved: number; skipped: number; error?: string }>;
   deleteGlyph: (profileId: string, glyphId: string) => void;
   /** 按字符搜索 glyph（返回该 profile 下匹配的 glyph） */
@@ -167,6 +169,7 @@ export function useHandwriting({
       char: string,
       bbox: GlyphBoundingBox,
       sampleDataURL: string,
+      backgroundMode: "fixed" | "adaptive" = "fixed",
     ): Promise<
       { ok: true; glyph: HandwritingGlyph } | { ok: false; error: string }
     > => {
@@ -180,6 +183,7 @@ export function useHandwriting({
           bbox,
           outMime: "image/png",
           transparent: true,
+          backgroundMode,
         });
         const glyphDataURL = `data:${resp.mime};base64,${resp.image}`;
         // 计算该字符已有的 variantIndex
@@ -234,6 +238,7 @@ export function useHandwriting({
       sampleSetId: string,
       items: { char: string; bbox: GlyphBoundingBox }[],
       sampleDataURL: string,
+      backgroundMode: "fixed" | "adaptive" = "fixed",
     ): Promise<{ saved: number; skipped: number; error?: string }> => {
       if (items.length === 0) return { saved: 0, skipped: 0 };
       try {
@@ -255,6 +260,7 @@ export function useHandwriting({
             bbox: item.bbox,
             outMime: "image/png",
             transparent: true,
+            backgroundMode,
           });
           const glyphDataURL = `data:${resp.mime};base64,${resp.image}`;
           const vi = variantCounter.get(c) ?? 0;

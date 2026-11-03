@@ -69,6 +69,8 @@ export interface SegmentGlyphRequest {
   thresholdValue?: number;
   /** 是否转透明背景（深色像素保留，浅色透明） */
   transparent?: boolean;
+  /** Remove uneven paper illumination before extracting photographed glyphs. */
+  backgroundMode?: "fixed" | "adaptive";
   /** 归一化后的边长（px），等比缩放填充，默认 0 不缩放 */
   normalizeSize?: number;
 }
@@ -88,6 +90,8 @@ export interface SegmentGlyphResponse {
 export interface DetectGlyphCandidatesRequest {
   image: string;
   mime: string;
+  /** fixed for scans; adaptive uses local contrast for unevenly lit photos. */
+  thresholdMode?: "fixed" | "adaptive";
   threshold?: number;
   minWidth?: number;
   minHeight?: number;

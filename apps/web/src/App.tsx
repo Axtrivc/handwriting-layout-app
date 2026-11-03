@@ -498,7 +498,7 @@ export default function App() {
   }, []);
 
   const handleSaveGlyph = useCallback(
-    async (char: string, bbox: GlyphBoundingBox) => {
+    async (char: string, bbox: GlyphBoundingBox, backgroundMode: "fixed" | "adaptive") => {
       if (!segmenterTarget) return false;
       const prof = project.handwritingProfiles.find((p) => p.id === segmenterTarget.profileId);
       const ss = prof?.sampleSets.find((s) => s.id === segmenterTarget.sampleSetId);
@@ -506,7 +506,7 @@ export default function App() {
       const epoch = segmenterEpoch.current;
       setSegSaving(true);
       setSegError(null);
-      const res = await hw.saveGlyph(segmenterTarget.profileId, segmenterTarget.sampleSetId, char, bbox, ss.imageBase64);
+      const res = await hw.saveGlyph(segmenterTarget.profileId, segmenterTarget.sampleSetId, char, bbox, ss.imageBase64, backgroundMode);
       if (epoch !== segmenterEpoch.current) return false;
       setSegSaving(false);
       if (!res.ok) setSegError(res.error);
@@ -517,7 +517,7 @@ export default function App() {
   );
 
   const handleBatchSaveGlyphs = useCallback(
-    async (items: { char: string; bbox: GlyphBoundingBox }[]) => {
+    async (items: { char: string; bbox: GlyphBoundingBox }[], backgroundMode: "fixed" | "adaptive") => {
       if (!segmenterTarget) return { saved: 0, skipped: items.length };
       const prof = project.handwritingProfiles.find((p) => p.id === segmenterTarget.profileId);
       const ss = prof?.sampleSets.find((s) => s.id === segmenterTarget.sampleSetId);
@@ -525,7 +525,7 @@ export default function App() {
       const epoch = segmenterEpoch.current;
       setSegSaving(true);
       setSegError(null);
-      const res = await hw.batchSaveGlyphs(segmenterTarget.profileId, segmenterTarget.sampleSetId, items, ss.imageBase64);
+      const res = await hw.batchSaveGlyphs(segmenterTarget.profileId, segmenterTarget.sampleSetId, items, ss.imageBase64, backgroundMode);
       if (epoch !== segmenterEpoch.current) return { saved: 0, skipped: items.length, error: "标注会话已结束" };
       setSegSaving(false);
       if (res.error) setSegError(res.error);
@@ -544,13 +544,13 @@ export default function App() {
   );
 
   const handleDetect = useCallback(
-    async (sampleDataURL: string): Promise<GlyphCandidate[]> => {
+    async (sampleDataURL: string, thresholdMode: "fixed" | "adaptive" = "fixed"): Promise<GlyphCandidate[]> => {
       const epoch = segmenterEpoch.current;
       setDetecting(true);
       setSegError(null);
       try {
         const { data, mime } = splitDataURL(sampleDataURL);
-        const resp = await detectGlyphCandidates({ image: data, mime });
+        const resp = await detectGlyphCandidates({ image: data, mime, thresholdMode });
         if (epoch !== segmenterEpoch.current) throw new Error("标注会话已结束");
         return resp.candidates;
       } catch (err) {
@@ -731,6 +731,7 @@ export default function App() {
               </summary>
               <ProfileManager
                 profiles={project.handwritingProfiles}
+                projectText={project.pages.flatMap(page => page.textObjects.map(obj => obj.text)).join('\n')}
                 activeProfileId={project.activeHandwritingProfileId}
                 onCreate={hw.createProfile}
                 onRename={hw.renameProfile}
