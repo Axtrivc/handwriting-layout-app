@@ -104,8 +104,11 @@ def clean_regions(img: Image.Image, regions: Sequence[RectRegion], radius: int =
 
     # Closing removes narrow dark strokes from the background estimate while
     # retaining slow illumination gradients. Per-channel contrast catches color ink.
+    binary_scan = bool(np.all((rgb == 0) | (rgb == 255)) and
+                       np.array_equal(rgb[:, :, 0], rgb[:, :, 1]) and
+                       np.array_equal(rgb[:, :, 1], rgb[:, :, 2]))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
-    paper = cv2.morphologyEx(rgb, cv2.MORPH_CLOSE, kernel)
+    paper = np.full_like(rgb, 255) if binary_scan else cv2.morphologyEx(rgb, cv2.MORPH_CLOSE, kernel)
     background = paper.copy()
     rules = np.zeros(selected.shape, dtype=bool)
     if opts.detect_lines:
@@ -134,7 +137,9 @@ def clean_regions(img: Image.Image, regions: Sequence[RectRegion], radius: int =
     # bleed into the paper where a character crossed the rule.
     donor = rgb.copy()
     donor[rules] = paper[rules]
-    result = cv2.inpaint(donor, mask, max(1, opts.radius), flag)
+    # A binary scan has white paper: interpolating neighboring black text would
+    # introduce gray smears. Erase masked strokes to paper, then restore rules.
+    result = np.full_like(rgb, 255) if binary_scan else cv2.inpaint(donor, mask, max(1, opts.radius), flag)
     restore = rules & (mask > 0)
     result[restore] = background[restore]
     if not np.any(result[mask > 0] != rgb[mask > 0]):

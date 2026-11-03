@@ -121,7 +121,8 @@ export default function App() {
     window.setTimeout(() => setToast((cur) => (cur === msg ? null : cur)), 2200);
   }, []);
 
-  const { selections, setSelections, cleaning, cleanFlash, cleanStrength, setCleanStrength,
+  const { selections, setSelections, cleaning, processingOperation, cleanFlash, cleanStrength, setCleanStrength,
+    scanMode, setScanMode, scanDetail, setScanDetail, handlePrepareScan, undoOperation,
     preserveRules, setPreserveRules, compareOriginal, setCompareOriginal, visiblePreview,
     setCleanPreview, invalidateCleanup, handleSelectionEnd, handleSelectionUpdate,
     handleClearSelections, handleUndoClean, handleClearRegion, handleApplyClean, canUndoClean } =
@@ -674,6 +675,14 @@ export default function App() {
         preserveRules={preserveRules}
         onPreserveRules={setPreserveRules}
         hasPreview={!!visiblePreview}
+        previewOperation={visiblePreview?.operation ?? null}
+        undoOperation={undoOperation}
+        scanMode={scanMode}
+        processingOperation={processingOperation}
+        onScanMode={setScanMode}
+        scanDetail={scanDetail}
+        onScanDetail={setScanDetail}
+        onPrepareScan={handlePrepareScan}
         compareOriginal={compareOriginal}
         onCompareOriginal={() => setCompareOriginal((v) => !v)}
         onApplyClean={handleApplyClean}

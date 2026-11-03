@@ -79,6 +79,7 @@ function page(record: RecordValue, path: string) {
   nullableString(record, 'backgroundImage', path);
   list(record, 'textObjects', path, text, true);
   list(record, 'cleanHistory', path, (entry, p) => {
+    if (entry.operation !== undefined && !['clean', 'scan'].includes(entry.operation as string)) fail(`${p}.operation`, '未知图片操作');
     stringField(entry, 'beforeImage', p, true);
     stringField(entry, 'afterImage', p, true);
     if (!Array.isArray(entry.regions)) fail(`${p}.regions`, '应为数组');

@@ -1,146 +1,164 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { nowISO, type CanvasPage, type CanvasProject } from "@hw-layout/shared";
+import { nowISO, type CanvasPage, type CanvasProject, type ScanMode, type ScanDetail } from "@hw-layout/shared";
 import type { SelectionRect } from "../components/CanvasStage.js";
 import { clipSelection } from "./cleanSelection.js";
-import { cleanRegion } from "./apiClient.js";
+import { cleanRegion, prepareScan } from "./apiClient.js";
 import { describeError } from "./errors.js";
 import { loadImage, splitDataURL, joinDataURL, uid } from "./image.js";
 
-/** Owns cleanup requests, temporary preview and explicit document commits. */
+type Operation = "clean" | "scan";
+interface BackgroundPreview {
+  pageId: string; beforeImage: string; afterImage: string;
+  image: HTMLImageElement; selections: SelectionRect[]; operation: Operation;
+}
+
+/** Scan preparation and cleanup share one preview/commit/undo transaction. */
 export function useCleanup({ project, activePage, generation, updatePage, showToast, setCleanError }: {
   project: CanvasProject; activePage: CanvasPage | null; generation: number;
   updatePage: (id: string, update: (page: CanvasPage) => CanvasPage) => void;
   showToast: (message: string) => void; setCleanError: (error: string | null) => void;
 }) {
-  // 框选清除区域状态（作用于当前页）
   const [selections, setSelections] = useState<SelectionRect[]>([]);
-  const [cleaning, setCleaning] = useState(false);
-  // 清除成功后的闪烁反馈（显示绿色确认框的位置）
+  const [processingOperation, setProcessingOperation] = useState<Operation | null>(null);
+  const cleaning = processingOperation !== null;
   const [cleanFlash, setCleanFlash] = useState<SelectionRect[] | null>(null);
-
   const [cleanStrength, setCleanStrength] = useState<"gentle" | "standard" | "strong">("standard");
   const [preserveRules, setPreserveRules] = useState(true);
+  const [scanMode, setScanMode] = useState<ScanMode>("bw");
+  const [scanDetail, setScanDetail] = useState<ScanDetail>("standard");
   const [compareOriginal, setCompareOriginal] = useState(false);
-  const [cleanPreview, setCleanPreview] = useState<{
-    pageId: string; beforeImage: string; afterImage: string;
-    image: HTMLImageElement; selections: SelectionRect[];
-  } | null>(null);
-  const projectRef = useRef(project);
-  projectRef.current = project;
-  const cleanBusy = useRef(false);
-  const cleanContext = useRef(0);
+  const [cleanPreview, setCleanPreview] = useState<BackgroundPreview | null>(null);
+  const latest = useRef({ project, generation });
+  latest.current = { project, generation };
+  const busy = useRef<number | null>(null);
+  const context = useRef(0);
 
   const invalidateCleanup = useCallback(() => {
-    cleanContext.current++;
+    context.current++;
+    busy.current = null;
+    setProcessingOperation(null);
     setCleanPreview(null);
     setCompareOriginal(false);
     setCleanFlash(null);
     setSelections([]);
     setCleanError(null);
   }, [setCleanError]);
-
   useEffect(invalidateCleanup, [project.activePageId, generation, invalidateCleanup]);
+  useEffect(() => () => { context.current++; busy.current = null; }, []);
 
   const handleSelectionEnd = useCallback((rect: Omit<SelectionRect, "id">) => {
     if (!activePage || cleaning || cleanPreview) return;
     const clipped = clipSelection(rect, activePage.originalWidth, activePage.originalHeight);
-    if (clipped) setSelections((prev) => [...prev, { ...clipped, id: uid() }]);
+    if (clipped) setSelections(prev => [...prev, { ...clipped, id: uid() }]);
   }, [activePage, cleaning, cleanPreview]);
 
-  const handleSelectionUpdate = useCallback(
-    (id: string, rect: Omit<SelectionRect, "id">) => {
-      if (!activePage || cleaning || cleanPreview) return;
-      const clipped = clipSelection(rect, activePage.originalWidth, activePage.originalHeight);
-      if (clipped) setSelections((prev) => prev.map((s) => (s.id === id ? { ...s, ...clipped } : s)));
-    }, [activePage, cleaning, cleanPreview],
-  );
+  const handleSelectionUpdate = useCallback((id: string, rect: Omit<SelectionRect, "id">) => {
+    if (!activePage || cleaning || cleanPreview) return;
+    const clipped = clipSelection(rect, activePage.originalWidth, activePage.originalHeight);
+    if (clipped) setSelections(prev => prev.map(s => s.id === id ? { ...s, ...clipped } : s));
+  }, [activePage, cleaning, cleanPreview]);
 
-  const handleClearSelections = useCallback(() => {
-    setSelections([]);
-    setCleanError(null);
-  }, [setCleanError]);
+  const handleClearSelections = useCallback(() => { setSelections([]); setCleanError(null); }, [setCleanError]);
 
-  const handleUndoClean = useCallback(async () => {
-    if (!activePage || cleanBusy.current) return;
+  const isCurrent = (token: number, pageId: string, source: string) =>
+    context.current === token && latest.current.generation === generation &&
+    latest.current.project.activePageId === pageId &&
+    latest.current.project.pages.find(page => page.id === pageId)?.backgroundImage === source;
+
+  const checkDimensions = (image: HTMLImageElement, page: CanvasPage) => {
+    if (image.naturalWidth !== page.originalWidth || image.naturalHeight !== page.originalHeight) {
+      throw new Error("处理结果方向或尺寸与画布不一致，已保留原图。请更新后端并重新导入原始照片。");
+    }
+  };
+
+  const handleUndoClean = async () => {
+    if (!activePage?.backgroundImage || busy.current !== null) return;
     const last = activePage.cleanHistory.at(-1);
     if (!last) return;
-    cleanBusy.current = true;
-    setCleaning(true);
+    const token = ++context.current;
+    const source = activePage.backgroundImage;
+    busy.current = token;
+    setProcessingOperation(last.operation ?? "clean");
+    setCleanFlash(null);
     try {
-      await loadImage(last.beforeImage);
-      const current = projectRef.current.pages.find((pg) => pg.id === activePage.id);
-      if (current?.backgroundImage !== activePage.backgroundImage) return;
-      updatePage(activePage.id, (pg) => ({
-        ...pg, backgroundImage: last.beforeImage,
-        cleanHistory: pg.cleanHistory.slice(0, -1), updatedAt: nowISO(),
+      const image = await loadImage(last.beforeImage);
+      if (!isCurrent(token, activePage.id, source)) return;
+      checkDimensions(image, activePage);
+      updatePage(activePage.id, pg => pg.backgroundImage !== source ? pg : ({
+        ...pg, backgroundImage: last.beforeImage, cleanHistory: pg.cleanHistory.slice(0, -1), updatedAt: nowISO(),
       }));
       setCleanPreview(null);
       setSelections([]);
       setCleanError(null);
-      showToast("已撤销最近一次清除");
-    } catch (err) {
-      setCleanError(describeError(err));
+      showToast(last.operation === "scan" ? "已撤销扫描增强，恢复上一张背景" : "已撤销最近一次清除");
+    } catch (error) {
+      if (isCurrent(token, activePage.id, source)) setCleanError(describeError(error));
     } finally {
-      cleanBusy.current = false;
-      setCleaning(false);
+      if (busy.current === token) { busy.current = null; setProcessingOperation(null); }
     }
-  }, [activePage, updatePage, showToast, setCleanError]);
+  };
 
-  const handleClearRegion = useCallback(async () => {
-    if (!activePage?.backgroundImage || selections.length === 0 || cleanBusy.current) return;
-    const beforeImage = activePage.backgroundImage;
-    const context = cleanContext.current;
-    const regions = selections.map((s) => clipSelection(s, activePage.originalWidth, activePage.originalHeight))
+  const preview = async (operation: Operation) => {
+    if (!activePage?.backgroundImage || busy.current !== null || cleanPreview) return;
+    const regions = selections.map(s => clipSelection(s, activePage.originalWidth, activePage.originalHeight))
       .filter((r): r is NonNullable<typeof r> => r !== null);
-    if (regions.length === 0) return;
-    cleanBusy.current = true;
-    setCleaning(true);
+    if (operation === "clean" && !regions.length) return;
+    const beforeImage = activePage.backgroundImage;
+    const token = ++context.current;
+    busy.current = token;
+    setProcessingOperation(operation);
+    setCleanFlash(null);
     setCleanError(null);
     try {
       const { data, mime } = splitDataURL(beforeImage);
-      const resp = await cleanRegion({ image: data, mime, regions,
-        strength: cleanStrength, preserveRules });
-      const afterImage = joinDataURL(resp.mime, resp.image);
-      const img = await loadImage(afterImage);
-      const current = projectRef.current;
-      if (cleanContext.current !== context || current.activePageId !== activePage.id ||
-          current.pages.find((pg) => pg.id === activePage.id)?.backgroundImage !== beforeImage) return;
-      if (resp.changed === false) {
+      const response = operation === "scan"
+        ? await prepareScan({ image: data, mime, mode: scanMode, detail: scanDetail })
+        : await cleanRegion({ image: data, mime, regions, strength: cleanStrength, preserveRules });
+      if (!isCurrent(token, activePage.id, beforeImage)) return;
+      const afterImage = joinDataURL(response.mime, response.image);
+      const image = await loadImage(afterImage);
+      if (!isCurrent(token, activePage.id, beforeImage)) return;
+      checkDimensions(image, activePage);
+      if ("changed" in response && response.changed === false) {
         setCleanError("未检测到可清除的笔迹，请调整选区或尝试加强力度。");
         return;
       }
-      setCleanPreview({ pageId: activePage.id, beforeImage, afterImage, image: img, selections });
+      setCleanPreview({ pageId: activePage.id, beforeImage, afterImage, image,
+        selections: operation === "clean" ? selections : [], operation });
       setCompareOriginal(false);
-    } catch (err) {
-      if (projectRef.current.activePageId === activePage.id) setCleanError(describeError(err));
+    } catch (error) {
+      if (isCurrent(token, activePage.id, beforeImage)) setCleanError(describeError(error));
     } finally {
-      cleanBusy.current = false;
-      setCleaning(false);
+      if (busy.current === token) { busy.current = null; setProcessingOperation(null); }
     }
-  }, [activePage, selections, cleanStrength, preserveRules, setCleanError]);
+  };
 
   const visiblePreview = cleanPreview?.pageId === activePage?.id &&
     cleanPreview?.beforeImage === activePage?.backgroundImage ? cleanPreview : null;
 
   const handleApplyClean = () => {
     if (!visiblePreview) return;
-    const { pageId, beforeImage, afterImage, selections: regions } = visiblePreview;
-    updatePage(pageId, (pg) => ({ ...pg, backgroundImage: afterImage,
-      cleanHistory: [...pg.cleanHistory, { beforeImage, afterImage, regions }].slice(-10),
-      updatedAt: nowISO(),
+    const { pageId, beforeImage, afterImage, selections: regions, operation } = visiblePreview;
+    updatePage(pageId, pg => pg.backgroundImage !== beforeImage ? pg : ({ ...pg, backgroundImage: afterImage,
+      cleanHistory: [...pg.cleanHistory, { beforeImage, afterImage, regions, operation }].slice(-10), updatedAt: nowISO(),
     }));
     setCleanPreview(null);
     setCompareOriginal(false);
     setSelections([]);
-    setCleanFlash(regions);
-    window.setTimeout(() => setCleanFlash(null), 1500);
-    showToast("已应用清除，可撤销恢复原图");
+    if (operation === "clean") {
+      setCleanFlash(regions);
+      const token = context.current;
+      window.setTimeout(() => { if (context.current === token) setCleanFlash(null); }, 1500);
+    }
+    showToast(operation === "scan" ? "已应用扫描增强，现在可以框选擦除；可撤销恢复原图" : "已应用清除，可撤销恢复原图");
   };
 
   const canUndoClean = (activePage?.cleanHistory.length ?? 0) > 0;
-
-  return { selections, setSelections, cleaning, cleanFlash, cleanStrength, setCleanStrength,
-    preserveRules, setPreserveRules, compareOriginal, setCompareOriginal, visiblePreview,
-    setCleanPreview, invalidateCleanup, handleSelectionEnd, handleSelectionUpdate,
-    handleClearSelections, handleUndoClean, handleClearRegion, handleApplyClean, canUndoClean };
+  const undoOperation = activePage?.cleanHistory.at(-1)?.operation ?? "clean";
+  return { selections, setSelections, cleaning, processingOperation, cleanFlash, cleanStrength, setCleanStrength,
+    preserveRules, setPreserveRules, scanMode, setScanMode, scanDetail, setScanDetail,
+    compareOriginal, setCompareOriginal, visiblePreview, setCleanPreview, invalidateCleanup,
+    handleSelectionEnd, handleSelectionUpdate, handleClearSelections, handleUndoClean,
+    handleClearRegion: () => preview("clean"), handlePrepareScan: () => preview("scan"),
+    handleApplyClean, canUndoClean, undoOperation };
 }

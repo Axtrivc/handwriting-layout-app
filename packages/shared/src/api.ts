@@ -33,6 +33,21 @@ export interface CleanRegionResponse {
   changed?: boolean;
 }
 
+export type ScanMode = "bw" | "gray";
+export type ScanDetail = "faint" | "standard" | "denoise";
+export interface PrepareScanRequest {
+  image: string;
+  mime: string;
+  mode: ScanMode;
+  detail: ScanDetail;
+}
+export interface PrepareScanResponse {
+  image: string;
+  mime: string;
+  width: number;
+  height: number;
+}
+
 /** POST /export 请求（预留） */
 export interface ExportRequest {
   /** 工程数据 JSON */

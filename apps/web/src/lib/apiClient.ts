@@ -12,6 +12,8 @@ import {
   DEFAULT_API_BASE,
   type CleanRegionRequest,
   type CleanRegionResponse,
+  type PrepareScanRequest,
+  type PrepareScanResponse,
   type DetectGlyphCandidatesRequest,
   type DetectGlyphCandidatesResponse,
   type ExportRequest,
@@ -125,6 +127,12 @@ export async function cleanRegion(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
+  }, 60000);
+}
+
+export async function prepareScan(req: PrepareScanRequest): Promise<PrepareScanResponse> {
+  return request<PrepareScanResponse>("/prepare-scan", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req),
   }, 60000);
 }
 

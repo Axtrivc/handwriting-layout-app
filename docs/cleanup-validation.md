@@ -1,8 +1,19 @@
 # 清除字迹：实现与回归验证
 
-本轮更新把直接覆盖背景改为「预览清除 → 查看原图/效果 → 应用或取消」。
+推荐照片使用「预览扫描 → 查看原图/效果 → 应用扫描 → 框选 → 预览清除 → 应用清除」。
+原始扫描稿仍可直接框选清除，无需重复增强。
 只有应用时才写入项目和撤销记录。切换页面、更换图片、加载项目后，旧清除请求的结果不再应用。
-清除历史保留最近 10 次；更换底图时清空该页清除历史。
+背景处理历史保留最近 10 次，扫描和清除按顺序逐步撤销；更换底图时清空该页历史。
+扫描操作随工程 JSON 保存，旧工程没有操作类型时仍按清除历史读取。
+
+## 方向与扫描增强
+
+- 所有后端图片入口先应用 EXIF 方向（含旋转、镜像），与浏览器显示尺寸及选区坐标统一，再清除该方向标记，避免再次旋转。
+- 修复的是手机照片方向标记导致的处理后旋转；没有增加 OCR 自动转正、倾斜校正或透视矫正。无方向标记但本身拍横的照片仍按其原有方向显示。
+- `/prepare-scan` 先估计纸面光照、压低阴影，再输出灰度或自适应二值黑白 PNG；不改变几何尺寸。
+- 默认黑白模式适合白纸试卷擦除。「保留浅字」更敏感，但可能带入纸面噪声；「去噪更强」可能损失浅字。灰度模式保留更多明暗层次。
+- 转黑白前后的印刷字、标点、细线必须先对比预览。该步骤不区分手写和印刷，也不恢复被笔迹遮住的原文。
+- 前端拒绝尺寸与画布不一致的处理结果，保留当前背景。更新本地代码后需重启后端；旧版本已经错误旋转的结果建议从原始照片重新处理。
 
 ## 算法
 
@@ -12,6 +23,7 @@
 - 仅替换选区内检测到的笔画像素；选区外和 alpha 通道保持不变。
 - API 始终返回 PNG，避免对 JPEG 扫描稿重复有损编码。`changed=false` 表示未检测到可清除内容。
 - 越界区域真正裁剪；完全在图外的区域不会修改边缘像素。
+- 对黑白扫描版，检测到的笔画像素恢复为白色纸底，不从相邻黑字插值出灰色涂抹；横线仍需要双侧证据。
 
 这仍是针对纸面扫描稿的传统图像修复，不保证复杂照片、粗涂抹、倾斜/弯曲线条、垂直表格线或严重阴影的无痕恢复。
 合成样本不能替代用户真实扫描稿验收。先预览，检查细节后应用。
@@ -22,11 +34,14 @@
 
 ```bash
 services/api/.venv/bin/python services/api/scripts/test_inpaint.py
+services/api/.venv/bin/python services/api/scripts/test_document_scan.py
 services/api/.venv/bin/python services/api/scripts/test_clean_api.py
 node scripts/test_editing.mjs
 # 浏览器回归需要 Playwright 和 Chromium；可使用外部安装，无需改项目依赖
 PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
   CHROMIUM_PATH=/usr/bin/chromium node scripts/test_clean_ui.cjs
+PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
+  CHROMIUM_PATH=/usr/bin/chromium node scripts/test_scan_ui.cjs
 ```
 
 `test_editing.mjs` 使用 Node 22.18+ 的 TypeScript 类型擦除能力，本云环境是 Node 24。
@@ -34,5 +49,9 @@ PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
 像素回归覆盖黑笔、浅色铅笔、红蓝笔、实线/虚线、无字纸张、扫描噪声/抗锯齿、重叠区域、裁剪、透明度和选区外内容。
 接口测试覆盖 PNG/JPEG、三档力度、选区外像素一致性及非法输入。
 浏览器测试覆盖预览、原图对比、取消、应用、撤销、文本首次编辑撤销重做、缩放坐标、调整选区不新增框，以及切页后延迟请求的隔离。
+
+扫描回归覆盖 8 种 EXIF 方向、PNG 输出不重复转向、模拟光照阴影、浅字选项、一像素横线/小标点、透明度、宽笔画擦除无灰痕。
+真实浏览器连接本地 API 验证 EXIF 照片的显示坐标、黑白/灰度预览、选区外像素一致、带文字对象的扫描/清除逐步撤销、工程保存重载，以及错误方向和延迟失败隔离。
+这里的照片均为可重复生成的测试样本，尚未用用户截图中的原始照片验收。
 
 另修复文本撤销栈：第一次操作现在可撤销，重做能恢复最新操作，加载工程时清除旧历史。

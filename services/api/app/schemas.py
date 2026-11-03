@@ -28,6 +28,20 @@ class CleanRegionResponse(BaseModel):
     changed: bool = True
 
 
+class PrepareScanRequest(BaseModel):
+    image: str
+    mime: str = "image/png"
+    mode: Literal["bw", "gray"] = "bw"
+    detail: Literal["faint", "standard", "denoise"] = "standard"
+
+
+class PrepareScanResponse(BaseModel):
+    image: str
+    mime: str
+    width: int
+    height: int
+
+
 class ExportRequest(BaseModel):
     project: dict = Field(default_factory=dict)
     format: Literal["png", "pdf"] = "png"

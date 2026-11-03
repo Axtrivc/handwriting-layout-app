@@ -114,11 +114,13 @@ export const DEFAULT_TEXT_STYLE: TextStyle = {
   blur: 0,
 };
 
-/** 一次清除操作的历史记录（用于撤销） */
+/** 一次背景处理的历史记录（扫描增强或清除，用于撤销）。 */
 export interface CleanHistoryEntry {
-  /** 清除前的背景图 dataURL */
+  /** Missing on older files: treat as a cleanup. */
+  operation?: "clean" | "scan";
+  /** 处理前的背景图 dataURL */
   beforeImage: string;
-  /** 清除后（当前）的背景图 dataURL */
+  /** 处理后（当前）的背景图 dataURL */
   afterImage: string;
   /** 涉及的区域 */
   regions: RectRegion[];

@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import io
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def b64_to_image(data: str, mime: str = "image/png") -> Image.Image:
@@ -15,13 +15,13 @@ def b64_to_image(data: str, mime: str = "image/png") -> Image.Image:
         mime: MIME 类型，决定解码格式。
     """
     raw = base64.b64decode(data)
-    img = Image.open(io.BytesIO(raw))
-    # 统一转 RGB / RGBA，方便后续 OpenCV 处理
-    fmt = img.format.upper() if img.format else (
-        "PNG" if "png" in mime else "JPEG"
-    )
-    _ = fmt  # 保留用于日志
-    return img
+    with Image.open(io.BytesIO(raw)) as source:
+        # Browsers apply EXIF orientation before displaying images and reporting
+        # naturalWidth/Height. Use those same pixels for EVERY API coordinate.
+        # exif_transpose also removes the tag so PNG output cannot rotate twice.
+        oriented = ImageOps.exif_transpose(source)
+        has_alpha = "A" in oriented.getbands() or "transparency" in oriented.info
+        return oriented.convert("RGBA" if has_alpha else "RGB")
 
 
 def image_to_b64(img: Image.Image, mime: str = "image/png") -> str:
