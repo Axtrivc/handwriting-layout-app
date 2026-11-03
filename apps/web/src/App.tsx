@@ -47,6 +47,8 @@ interface SegmenterTarget {
 export default function App() {
   const { project, dirty, generation, edit: touchProject, updatePage,
     selectPage, replace: replaceDocument, markSaved } = useDocument();
+  const latestDocument = useRef({ project, generation });
+  latestDocument.current = { project, generation };
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [selectMode, setSelectMode] = useState(false);
@@ -84,6 +86,8 @@ export default function App() {
   });
   const glyphImages = useGlyphImages(
     project.handwritingProfiles,
+    activePage?.textObjects ?? EMPTY_TEXT_OBJECTS,
+    project.activeHandwritingProfileId,
   );
 
   const selected = useMemo(
@@ -122,6 +126,7 @@ export default function App() {
   }, []);
 
   const { selections, setSelections, cleaning, processingOperation, cleanFlash, cleanStrength, setCleanStrength,
+    strokes, cleanTool, setCleanTool, brushWidth, setBrushWidth, handleStrokeEnd, handleUndoStroke, handleCancelProcessing,
     scanMode, setScanMode, scanDetail, setScanDetail, handlePrepareScan, undoOperation,
     preserveRules, setPreserveRules, compareOriginal, setCompareOriginal, visiblePreview,
     setCleanPreview, invalidateCleanup, handleSelectionEnd, handleSelectionUpdate,
@@ -129,6 +134,15 @@ export default function App() {
     useCleanup({ project, activePage, generation, updatePage, showToast, setCleanError });
 
   const uploadSequence = useRef(new Map<string, number>());
+  const importSequence = useRef(0);
+  const importBusy = useRef(false);
+  const [importingImages, setImportingImages] = useState(false);
+  useEffect(() => {
+    uploadSequence.current.clear();
+    importSequence.current++;
+    importBusy.current = false;
+    setImportingImages(false);
+  }, [generation]);
 
   // ===== 上传图片到当前页 =====
   const handleUpload = useCallback(
@@ -136,49 +150,63 @@ export default function App() {
       if (!activePage) return;
       const sequence = (uploadSequence.current.get(activePage.id) ?? 0) + 1;
       uploadSequence.current.set(activePage.id, sequence);
+      const current = () => latestDocument.current.generation === generation &&
+        uploadSequence.current.get(activePage.id) === sequence &&
+        latestDocument.current.project.pages.some(page => page.id === activePage.id);
+      const visible = () => current() && latestDocument.current.project.activePageId === activePage.id;
       invalidateCleanup();
       try {
         const dataURL = await fileToDataURL(file);
         const img = await loadImage(dataURL);
-        if (uploadSequence.current.get(activePage.id) !== sequence) return;
+        if (!current()) return;
         updatePage(activePage.id, (pg) => ({ ...pg, backgroundImage: dataURL,
           originalWidth: img.naturalWidth, originalHeight: img.naturalHeight, cleanHistory: [] }));
-        setCleanPreview(null);
-        setSelections([]);
-        setSelectedId(null);
-        setCleanError(null);
+        if (visible()) {
+          invalidateCleanup();
+          setSelectedId(null);
+        }
       } catch (err) {
-        if (uploadSequence.current.get(activePage.id) === sequence) setCleanError(describeError(err));
+        if (visible()) setCleanError(`图片「${file.name}」导入失败：${describeError(err)}`);
       }
     },
-    [activePage, updatePage, invalidateCleanup, setCleanPreview, setSelections],
+    [activePage, generation, updatePage, invalidateCleanup],
   );
 
   // ===== 多图导入：每张图建一页（按文件名排序） =====
   const handleImportImages = useCallback(
     async (files: File[]) => {
-      // 按文件名排序
-      const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, "zh"));
-      const newPages: CanvasPage[] = [];
-      for (const file of sorted) {
-        const dataURL = await fileToDataURL(file);
-        const img = await loadImage(dataURL);
-        const idx = project.pages.length + newPages.length;
-        const page = createBlankPage(idx, file.name.replace(/\.[^.]+$/, ""));
-        page.backgroundImage = dataURL;
-        page.originalWidth = img.naturalWidth;
-        page.originalHeight = img.naturalHeight;
-        newPages.push(page);
-
+      if (!files.length || importBusy.current) return;
+      const token = ++importSequence.current;
+      const current = () => latestDocument.current.generation === generation && importSequence.current === token;
+      importBusy.current = true;
+      setImportingImages(true);
+      let filename = '';
+      try {
+        const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, "zh", { numeric: true }));
+        const newPages: CanvasPage[] = [];
+        for (const file of sorted) {
+          filename = file.name;
+          const dataURL = await fileToDataURL(file);
+          if (!current()) return;
+          const img = await loadImage(dataURL);
+          if (!current()) return;
+          newPages.push({ ...createBlankPage(0, file.name.replace(/\.[^.]+$/, "")),
+            backgroundImage: dataURL, originalWidth: img.naturalWidth, originalHeight: img.naturalHeight });
+        }
+        // Commit only after EVERY file decodes; index against the latest page list.
+        touchProject(p => ({ ...p,
+          pages: [...p.pages, ...newPages.map((page, i) => ({ ...page, index: p.pages.length + i }))],
+          activePageId: newPages[0].id,
+        }));
+        setCleanError(null);
+        showToast(`已导入 ${newPages.length} 页`);
+      } catch (error) {
+        if (current()) setCleanError(`图片「${filename}」导入失败，本批次未添加页面：${describeError(error)}`);
+      } finally {
+        if (current()) { importBusy.current = false; setImportingImages(false); }
       }
-      touchProject((p) => ({
-        ...p,
-        pages: [...p.pages, ...newPages],
-        activePageId: newPages[0]?.id ?? p.activePageId,
-      }));
-      showToast(`已导入 ${newPages.length} 页`);
     },
-    [project.pages.length, touchProject, showToast],
+    [generation, touchProject, showToast],
   );
 
   // ===== 页面 CRUD =====
@@ -667,6 +695,12 @@ export default function App() {
         selectedId={selectedId}
         selectMode={selectMode}
         selections={selections}
+        strokeCount={strokes.length}
+        cleanTool={cleanTool}
+        brushWidth={brushWidth}
+        onCleanTool={tool => { setCleanTool(tool); handleToggleSelectMode(true); }}
+        onBrushWidth={setBrushWidth}
+        onUndoStroke={handleUndoStroke}
         cleaning={cleaning}
         cleanError={cleanError ?? backgroundError}
         canUndoClean={canUndoClean}
@@ -683,6 +717,7 @@ export default function App() {
         scanDetail={scanDetail}
         onScanDetail={setScanDetail}
         onPrepareScan={handlePrepareScan}
+        onCancelProcessing={handleCancelProcessing}
         compareOriginal={compareOriginal}
         onCompareOriginal={() => setCompareOriginal((v) => !v)}
         onApplyClean={handleApplyClean}
@@ -702,7 +737,7 @@ export default function App() {
         <div className="canvas-wrap">
           {activePage ? (
             <CanvasStage
-              key={activePage.id}
+              key={`${generation}:${activePage.id}:${uploadSequence.current.get(activePage.id) ?? 0}`}
               project={stageView}
               image={visiblePreview && !compareOriginal ? visiblePreview.image : activeImage}
               selectedId={selectedId}
@@ -710,6 +745,10 @@ export default function App() {
               onChange={handleChange}
               selectMode={selectMode && !cleaning && !visiblePreview}
               selections={visiblePreview ? [] : selections}
+              cleanTool={cleanTool}
+              brushWidth={brushWidth}
+              strokes={visiblePreview ? [] : strokes}
+              onStrokeEnd={handleStrokeEnd}
               onSelectionUpdate={handleSelectionUpdate}
               onSelectionEnd={handleSelectionEnd}
               glyphImages={glyphImages}
@@ -731,6 +770,7 @@ export default function App() {
             onMovePage={handleMovePage}
             onSetActivePage={handleSetActivePage}
             onImportImages={handleImportImages}
+            importingImages={importingImages}
           />
           <div className="hw-panel">
             <details>
@@ -789,6 +829,8 @@ export default function App() {
     </div>
   );
 }
+
+const EMPTY_TEXT_OBJECTS: TextObject[] = [];
 
 function isEditableTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;

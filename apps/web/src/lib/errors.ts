@@ -12,7 +12,8 @@ export function describeError(err: unknown): string {
     return `HTTP ${err.status}: ${detail || err.message}`;
   }
   if (err instanceof Error) {
-    if (err.name === "AbortError") return "请求超时，请检查后端是否运行";
+    if (err.name === "TimeoutError") return "请求超时，请检查后端是否运行";
+    if (err.name === "AbortError") return "操作已取消";
     return err.message;
   }
   return String(err);

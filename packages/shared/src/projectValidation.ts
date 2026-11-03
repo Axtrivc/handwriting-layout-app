@@ -84,6 +84,13 @@ function page(record: RecordValue, path: string) {
     stringField(entry, 'afterImage', p, true);
     if (!Array.isArray(entry.regions)) fail(`${p}.regions`, '应为数组');
     list(entry, 'regions', p, bounds);
+    list(entry, 'strokes', p, (stroke, path) => {
+      numberField(stroke, 'width', path, 1, 512, true);
+      if (!Array.isArray(stroke.points) || stroke.points.length < 2 || stroke.points.length > 8192 || stroke.points.length % 2 ||
+        stroke.points.some(value => typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 16384)) {
+        fail(`${path}.points`, '应为有效的画笔坐标对');
+      }
+    });
   });
 }
 function profile(record: RecordValue, path: string) {

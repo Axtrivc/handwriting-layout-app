@@ -1,6 +1,7 @@
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {execFileSync}=require('node:child_process');
+const {canvasPoint}=require('./browser_canvas.cjs');
 const fixture=execFileSync('services/api/.venv/bin/python',['-c','import sys; sys.path.insert(0,"services/api/scripts"); from test_inpaint import CleanupTests; CleanupTests().fixture()[1].save(sys.stdout.buffer,format="PNG")']);
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
@@ -15,9 +16,8 @@ const fixture=execFileSync('services/api/.venv/bin/python',['-c','import sys; sy
   const stream=await(await promise).createReadStream();const chunks=[];for await(const chunk of stream)chunks.push(chunk);return Buffer.concat(chunks);
  }
  const a=await download('导出 PNG');assert.equal(a.readUInt32BE(16),300);assert.equal(a.readUInt32BE(20),140);
- const box=await page.locator('canvas').first().boundingBox();
- await page.mouse.move(box.x+40,box.y+40);await page.mouse.wheel(0,-400);await page.waitForTimeout(100);
- await page.keyboard.down('Space');await page.mouse.down();await page.mouse.move(box.x+100,box.y+65,{steps:10});await page.mouse.up();await page.keyboard.up('Space');
+ await page.mouse.move(...await canvasPoint(page,40,40));await page.mouse.wheel(0,-400);await page.waitForTimeout(100);
+ await page.keyboard.down('Space');await page.mouse.down();await page.mouse.move(...await canvasPoint(page,100,65),{steps:10});await page.mouse.up();await page.keyboard.up('Space');
  const b=await download('导出 PNG');assert.deepEqual(a,b,'viewport zoom/pan must not affect pixels');
  await page.getByTitle('导出倍率').selectOption('2');const large=await download('导出 PNG');assert.equal(large.readUInt32BE(16),600);assert.equal(large.readUInt32BE(20),280);
  await page.getByTitle('导出倍率').selectOption('1');
@@ -29,7 +29,12 @@ const fixture=execFileSync('services/api/.venv/bin/python',['-c','import sys; sy
  await page.getByTitle('复制此页').click();
  await page.waitForTimeout(200);
  const duplicate=await download('导出 PNG');assert.deepEqual(duplicate,a,'duplicate page background is preserved');
- const visible=await page.locator('canvas').first().evaluate(c=>Array.from(c.getContext('2d').getImageData(5,5,1,1).data));assert.equal(visible[3],255,'duplicate background must decode in editor');
+ const visible=await page.locator('.canvas-viewport').evaluate(node=>{
+  const c=node.querySelector('canvas'),ratio=c.width/c.clientWidth;
+  const x=(Number(node.dataset.viewX)+5*Number(node.dataset.viewScale))*ratio;
+  const y=(Number(node.dataset.viewY)+5*Number(node.dataset.viewScale))*ratio;
+  return Array.from(c.getContext('2d').getImageData(x,y,1,1).data);
+ });assert.equal(visible[3],255,'duplicate background must decode in editor');
  await download('保存');assert.equal(await page.locator('.dirty-dot').count(),0);
  await page.locator('summary').click();
  await page.getByPlaceholder('新档案名称（如：我的笔迹）').fill('测试档案');

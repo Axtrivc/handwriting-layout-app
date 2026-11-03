@@ -116,6 +116,16 @@ class ScanTests(unittest.TestCase):
         np.testing.assert_array_equal(np.asarray(image), original)
         np.testing.assert_array_equal(np.asarray(result)[:, :, 3], original[:, :, 3])
 
+    def test_translucent_gray_ink_is_not_faded_twice(self):
+        image = Image.new('RGBA', (160, 160), (255, 255, 255, 0))
+        ImageDraw.Draw(image).line((50, 30, 50, 120), fill=(20, 20, 20, 128), width=3)
+        result = prepare_scan(image, mode='gray')
+        self.assertEqual(result.getpixel((50, 75))[3], 128)
+        self.assertLess(abs(result.getpixel((50, 75))[0] - 20), 3)
+        before = Image.alpha_composite(Image.new('RGBA', image.size, 'white'), image)
+        after = Image.alpha_composite(Image.new('RGBA', image.size, 'white'), result)
+        self.assertLess(abs(before.getpixel((50, 75))[0] - after.getpixel((50, 75))[0]), 2)
+
     def test_binary_erase_has_no_gray_smear_even_for_wide_strokes(self):
         image = Image.new('RGB', (300, 200), 'white')
         draw = ImageDraw.Draw(image)

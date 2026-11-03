@@ -3,7 +3,7 @@
  *
  * TODO: 后续用 zod 或 pydantic schema 双向同步校验。
  */
-import type { RectRegion } from "./types.js";
+import type { RectRegion, CleanupStroke } from "./types.js";
 import type { GlyphBoundingBox, GlyphCandidate } from "./handwriting.js";
 export type { RectRegion } from "./types.js";
 export type { GlyphCandidate } from "./handwriting.js";
@@ -17,6 +17,7 @@ export interface CleanRegionRequest {
   mime: string;
   /** 要清理的矩形区域列表（基于原图坐标） */
   regions: RectRegion[];
+  strokes?: CleanupStroke[];
   strength?: "gentle" | "standard" | "strong";
   preserveRules?: boolean;
 }

@@ -5,6 +5,15 @@
 只有应用时才写入项目和撤销记录。切换页面、更换图片、加载项目后，旧清除请求的结果不再应用。
 背景处理历史保留最近 10 次，扫描和清除按顺序逐步撤销；更换底图时清空该页历史。
 扫描操作随工程 JSON 保存，旧工程没有操作类型时仍按清除历史读取。
+精细画笔选区以原图像素坐标保存路径和粗细，旧工程可省略 `strokes` 字段。
+
+## 精细选择与操作恢复
+
+- 大图自动适合窗口，100% / 放大 / 缩小仅影响视图。编辑画布按窗口尺寸分配，避免在高分屏上创建整张照片四倍像素的交互画布。
+- 矩形可调整位置和大小；精细画笔只清除实际路径，路径外接矩形内的其他内容不会因此被清除。单击形成圆点，支持撤销上一笔选区。
+- 路径、圆头及膨胀后的擦除掩膜均限制在选区和图片边界内；透明通道保持不变。
+- 等待中可以「取消处理」，保留原图和选区供重试。前端中止 HTTP 等待并丢弃过期结果；已经开始的后端图像计算不承诺立即停下。
+- 预览、应用、撤销、取消和错误信息固定在左栏底部，不受参数区域滚动影响。
 
 ## 方向与扫描增强
 
@@ -19,13 +28,13 @@
 
 - 使用局部纸张背景估计与逐颜色通道的对比度检测，替代固定灰度 <100 的黑字阈值。
 - 提供轻柔、标准、加强三档；可关闭横线保留。
-- 横线恢复要求选区左右两侧均有可靠证据。虚线按原图坐标估计周期，避免镜像复制邻近内容。
+- 横线恢复要求选区左右两侧均有可靠证据，表格竖线要求上下两侧有证据；虚线按原图坐标估计周期，避免镜像复制邻近内容。
 - 仅替换选区内检测到的笔画像素；选区外和 alpha 通道保持不变。
 - API 始终返回 PNG，避免对 JPEG 扫描稿重复有损编码。`changed=false` 表示未检测到可清除内容。
 - 越界区域真正裁剪；完全在图外的区域不会修改边缘像素。
 - 对黑白扫描版，检测到的笔画像素恢复为白色纸底，不从相邻黑字插值出灰色涂抹；横线仍需要双侧证据。
 
-这仍是针对纸面扫描稿的传统图像修复，不保证复杂照片、粗涂抹、倾斜/弯曲线条、垂直表格线或严重阴影的无痕恢复。
+这仍是针对纸面扫描稿的传统图像修复，不保证复杂照片、粗涂抹、倾斜/弯曲线条或严重阴影的无痕恢复。
 合成样本不能替代用户真实扫描稿验收。先预览，检查细节后应用。
 
 ## 可重复验证
@@ -35,6 +44,7 @@
 ```bash
 services/api/.venv/bin/python services/api/scripts/test_inpaint.py
 services/api/.venv/bin/python services/api/scripts/test_document_scan.py
+services/api/.venv/bin/python services/api/scripts/test_brush_cleanup.py
 services/api/.venv/bin/python services/api/scripts/test_clean_api.py
 node scripts/test_editing.mjs
 # 浏览器回归需要 Playwright 和 Chromium；可使用外部安装，无需改项目依赖
@@ -42,6 +52,10 @@ PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
   CHROMIUM_PATH=/usr/bin/chromium node scripts/test_clean_ui.cjs
 PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
   CHROMIUM_PATH=/usr/bin/chromium node scripts/test_scan_ui.cjs
+PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
+  CHROMIUM_PATH=/usr/bin/chromium node scripts/test_brush_ui.cjs
+PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
+  CHROMIUM_PATH=/usr/bin/chromium node scripts/test_viewport_ui.cjs
 ```
 
 `test_editing.mjs` 使用 Node 22.18+ 的 TypeScript 类型擦除能力，本云环境是 Node 24。
@@ -53,5 +67,6 @@ PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
 扫描回归覆盖 8 种 EXIF 方向、PNG 输出不重复转向、模拟光照阴影、浅字选项、一像素横线/小标点、透明度、宽笔画擦除无灰痕。
 真实浏览器连接本地 API 验证 EXIF 照片的显示坐标、黑白/灰度预览、选区外像素一致、带文字对象的扫描/清除逐步撤销、工程保存重载，以及错误方向和延迟失败隔离。
 这里的照片均为可重复生成的测试样本，尚未用用户截图中的原始照片验收。
+新增画笔回归覆盖路径内擦除、路径外接框中的印刷内容、圆点/边缘、横竖线交叉、竖向虚线、透明度、缩放坐标、取消请求后重试及旧工程兼容。
 
 另修复文本撤销栈：第一次操作现在可撤销，重做能恢复最新操作，加载工程时清除旧历史。

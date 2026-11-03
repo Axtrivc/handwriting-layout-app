@@ -11,6 +11,7 @@ interface PagePanelProps {
   onMovePage: (id: string, direction: -1 | 1) => void;
   onSetActivePage: (id: string) => void;
   onImportImages: (files: File[]) => void;
+  importingImages: boolean;
 }
 
 /**
@@ -26,6 +27,7 @@ export function PagePanel({
   onMovePage,
   onSetActivePage,
   onImportImages,
+  importingImages,
 }: PagePanelProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -48,8 +50,9 @@ export function PagePanel({
             className="btn btn--xs"
             onClick={() => setImportOpen((v) => !v)}
             title="导入多张图片自动建页"
+            disabled={importingImages}
           >
-            📥 多图
+            {importingImages ? "导入中…" : "📥 多图"}
           </button>
         </div>
       </div>

@@ -124,7 +124,12 @@ export interface CleanHistoryEntry {
   afterImage: string;
   /** 涉及的区域 */
   regions: RectRegion[];
+  /** 画笔路径；旧版本只有矩形时可省略。 */
+  strokes?: CleanupStroke[];
 }
+
+/** 原图坐标中的圆头画笔选区，points 按 x,y 交替排列。 */
+export interface CleanupStroke { points: number[]; width: number }
 
 /** 矩形区域 */
 export interface RectRegion {

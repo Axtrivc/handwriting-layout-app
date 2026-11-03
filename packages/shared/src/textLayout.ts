@@ -7,7 +7,17 @@
  * 本模块只做「纯布局计算」，不做实际绘制。
  * 绘制层（Konva / Canvas2D）根据 LayoutResult 自行绘制。
  */
-import { pickVariant, type HandwritingProfile } from "./handwriting.js";
+import { pickVariant, type HandwritingProfile, type HandwritingGlyph } from "./handwriting.js";
+
+function groupGlyphs(profile: HandwritingProfile | null) {
+  const grouped = new Map<string, HandwritingGlyph[]>();
+  for (const glyph of profile?.glyphs ?? []) {
+    const variants = grouped.get(glyph.char);
+    if (variants) variants.push(glyph);
+    else grouped.set(glyph.char, [glyph]);
+  }
+  return grouped;
+}
 import type { NaturalnessParams, TextObject } from "./types.js";
 
 /** 一个待绘制单元（glyph 图片 或 fallback 字符）。 */
@@ -93,6 +103,7 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
   const lines = obj.text.split("\n");
   const lineHeightPx = obj.style.fontSize * obj.style.lineHeight;
   const profileScale = opts.profile?.defaultRenderSettings.scale ?? 1;
+  const variantsByChar = groupGlyphs(opts.profile);
 
   // 组合种子
   const baseSeed =
@@ -122,8 +133,7 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
         absIdx++;
         continue;
       }
-      const variants =
-        opts.profile?.glyphs.filter((g) => g.char === ch) ?? [];
+      const variants = variantsByChar.get(ch) ?? [];
       const seed = obj.naturalnessSeed + absIdx;
       const glyph =
         variants.length > 0
@@ -265,9 +275,10 @@ export function collectGlyphKeys(
   if (!profile || obj.renderMode !== "handwritingGlyph") return [];
   const keys: string[] = [];
   const seen = new Set<string>();
-  for (const ch of obj.text) {
+  const variantsByChar = groupGlyphs(profile);
+  for (const ch of new Set(obj.text)) {
     if (ch === " " || ch === "\n") continue;
-    const variants = profile.glyphs.filter((g) => g.char === ch);
+    const variants = variantsByChar.get(ch) ?? [];
     for (const g of variants) {
       const key = `${profile.id}:${g.id}`;
       if (!seen.has(key)) {

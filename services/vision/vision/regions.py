@@ -2,6 +2,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+from typing import Sequence
+
+
+@dataclass(frozen=True)
+class BrushStroke:
+    points: Sequence[tuple[float, float]]
+    width: float
+
+    def bounds(self, width: int, height: int) -> "RectRegion":
+        if not self.points or not math.isfinite(self.width) or self.width < 1 or self.width > 512:
+            raise ValueError('画笔路径或粗细无效')
+        if any(not math.isfinite(v) for point in self.points for v in point):
+            raise ValueError('画笔坐标必须为有限数值')
+        radius = self.width / 2 + 1
+        x0 = math.floor(min(p[0] for p in self.points) - radius)
+        y0 = math.floor(min(p[1] for p in self.points) - radius)
+        x1 = math.ceil(max(p[0] for p in self.points) + radius)
+        y1 = math.ceil(max(p[1] for p in self.points) + radius)
+        return RectRegion(x0, y0, x1 - x0, y1 - y0).clip_to(width, height)
 
 
 @dataclass(frozen=True)

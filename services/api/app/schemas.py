@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+import math
 
 
 class RectRegion(BaseModel):
@@ -13,10 +14,23 @@ class RectRegion(BaseModel):
     height: int = Field(..., gt=0)
 
 
+class CleanupStroke(BaseModel):
+    points: List[float] = Field(min_length=2, max_length=8192)
+    width: float = Field(ge=1, le=512, allow_inf_nan=False)
+
+    @field_validator('points')
+    @classmethod
+    def coordinates(cls, value):
+        if len(value) % 2 or any(not math.isfinite(v) or v < 0 or v > 16384 for v in value):
+            raise ValueError('画笔路径需要有限的 x/y 坐标对')
+        return value
+
+
 class CleanRegionRequest(BaseModel):
     image: str = Field(..., description="图片 base64（不含 data: 前缀）")
     mime: str = Field("image/png", description="图片 MIME 类型")
-    regions: List[RectRegion] = Field(default_factory=list)
+    regions: List[RectRegion] = Field(default_factory=list, max_length=256)
+    strokes: List[CleanupStroke] = Field(default_factory=list, max_length=256)
     strength: Literal["gentle", "standard", "strong"] = "standard"
     preserveRules: bool = True
 

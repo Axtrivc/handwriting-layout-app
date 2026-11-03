@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { canvasPoint } = require('./browser_canvas.cjs');
 const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
   'import sys; sys.path.insert(0,"services/api/scripts"); from test_document_scan import oriented_jpeg; sys.stdout.buffer.write(oriented_jpeg())']);
 
@@ -26,9 +27,8 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
     }
     async function select() {
       await page.getByLabel('框选模式', { exact: true }).check();
-      const box = await page.locator('canvas').first().boundingBox();
-      await page.mouse.move(box.x + 90, box.y + 90); await page.mouse.down();
-      await page.mouse.move(box.x + 145, box.y + 165, { steps: 10 }); await page.mouse.up();
+      await page.mouse.move(...await canvasPoint(page, 90, 90)); await page.mouse.down();
+      await page.mouse.move(...await canvasPoint(page, 145, 165), { steps: 10 }); await page.mouse.up();
     }
     async function imageStats(source, before = null) {
       return page.evaluate(async ({ source, before }) => {
@@ -108,6 +108,7 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
     await button('↶ 撤销清除').click(); await button('↶ 撤销扫描').waitFor();
     assert.equal(await activeBackground(), scanPage.backgroundImage);
     await button('↶ 撤销扫描').click(); await button('↶ 撤销扫描').waitFor({ state: 'detached' });
+    await page.waitForFunction(source => document.querySelector('.page-item.is-active img')?.getAttribute('src') === source, original);
     assert.equal(await activeBackground(), original);
     assert.deepEqual((await save()).pages[0].textObjects, withText.pages[0].textObjects);
     console.log('PASS: EXIF upload/cleanup direction, gray/B&W preview/compare/cancel, clean white erase, exact exterior, save/load and two-step undo with text retained');
@@ -126,11 +127,11 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
     });
     const pending = page.waitForRequest(request => request.url().endsWith('/prepare-scan'));
     await button('预览扫描').click(); await pending;
+    const oldResponse = page.waitForEvent('requestfailed', request => request.url().endsWith('/prepare-scan'));
     await button('+ 新页').click();
     await page.locator('.upload-area input').setInputFiles({ name: 'new.jpg', mimeType: 'image/jpeg', buffer: fixture });
     await page.locator('.page-item.is-active').getByText('240×360 · 0 字', { exact: true }).waitFor();
     await scanPreview();
-    const oldResponse = page.waitForResponse(response => response.url().endsWith('/prepare-scan') && response.status() === 500);
     release(); await oldResponse; await page.waitForTimeout(100);
     assert.equal(await page.locator('.app__left .err-msg').count(), 0, 'old error must not affect the new page');
     await button('应用扫描').click();

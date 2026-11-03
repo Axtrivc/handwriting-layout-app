@@ -27,8 +27,8 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: 260px 1fr 300px;
-  grid-template-rows: 48px 1fr;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
+  grid-template-rows: 48px minmax(0, 1fr);
   height: 100vh;
 }
 
@@ -55,6 +55,14 @@ body {
   padding: 16px;
   overflow: auto;
 }
+
+.app__left { display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
+.left-content { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+.cleanup-actions { flex-shrink: 0; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--panel); }
+.cleanup-actions .hint { margin: 0 0 8px; }
+.cleanup-actions [role="status"] { display: flex; flex-wrap: wrap; gap: 6px; }
+.cleanup-actions [role="status"] .hint { flex-basis: 100%; }
+.cleanup-actions .err-msg { margin: 0 0 8px; max-height: 120px; overflow: auto; overflow-wrap: anywhere; }
 
 .app__right {
   border-right: none;
@@ -309,10 +317,23 @@ body {
 }
 
 .canvas-wrap {
+  width: 100%;
+  height: clamp(280px, calc(100vh - 320px), 900px);
+  flex-shrink: 0;
+  overflow: hidden;
   background: #e9e9ef;
   border-radius: 8px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
+
+.canvas-editor { height: 100%; display: flex; flex-direction: column; }
+.canvas-tools {
+  min-height: 38px; display: flex; align-items: center; flex-wrap: wrap;
+  gap: 6px; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.canvas-tools output { min-width: 42px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }
+.canvas-tools .hint { margin-left: auto; }
+.canvas-viewport { flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
 
 .canvas-empty {
   display: flex;

@@ -9,19 +9,14 @@
 import Konva from "konva";
 import { collectGlyphKeys, type CanvasPage, type HandwritingProfile, type NaturalnessParams } from "@hw-layout/shared";
 import { textScene } from "./textScene.js";
+import { loadImage } from './image.js';
 
 /** glyphKey("profileId:glyphId") -> HTMLImageElement 的缓存。 */
 export type GlyphImageStore = Map<string, HTMLImageElement>;
 
 /** 显式加载一张图片，resolve 在 onload 后。 */
 export function loadImageEl(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(e);
-    img.src = src;
-  });
+  return loadImage(src);
 }
 
 /**
@@ -45,8 +40,7 @@ export async function preloadPageGlyphs(
     const keys = collectGlyphKeys(obj, profile);
     for (const key of keys) {
       if (store.has(key)) continue;
-      const glyphId = key.split(":")[1];
-      const glyph = profile.glyphs.find((g) => g.id === glyphId);
+      const glyph = profile.glyphs.find((g) => `${profile.id}:${g.id}` === key);
       if (!glyph) continue;
       try {
         const img = await loadImageEl(glyph.imageBase64);

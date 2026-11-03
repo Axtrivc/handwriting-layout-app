@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .regions import RectRegion
+from .regions import RectRegion, BrushStroke
 
 
 @dataclass
@@ -82,11 +82,15 @@ def _rule_background(rgb: np.ndarray, paper: np.ndarray, selected: np.ndarray,
 
 
 def clean_regions(img: Image.Image, regions: Sequence[RectRegion], radius: int = 6,
-                  options: InpaintOptions | None = None) -> tuple[Image.Image, int]:
+                  options: InpaintOptions | None = None, *,
+                  strokes: Sequence[BrushStroke] = ()) -> tuple[Image.Image, int]:
     opts = options or InpaintOptions(radius=radius)
     width, height = img.size
-    clipped = [r.clip_to(width, height) for r in regions]
-    clipped = [r for r in clipped if r.is_valid()]
+    rectangles = [r.clip_to(width, height) for r in regions]
+    rectangles = [r for r in rectangles if r.is_valid()]
+    brushes = [(stroke, stroke.bounds(width, height)) for stroke in strokes]
+    brushes = [(stroke, bounds) for stroke, bounds in brushes if bounds.is_valid()]
+    clipped = rectangles + [bounds for _, bounds in brushes]
     if not clipped:
         return img, 0
 
@@ -96,11 +100,19 @@ def clean_regions(img: Image.Image, regions: Sequence[RectRegion], radius: int =
     y0 = max(0, min(r.y for r in clipped) - pad)
     x1 = min(width, max(r.x + r.width for r in clipped) + pad)
     y1 = min(height, max(r.y + r.height for r in clipped) + pad)
-    rgb = np.array(img.convert("RGB"))[y0:y1, x0:x1].copy()
+    rgb = np.array(img.crop((x0, y0, x1, y1)).convert("RGB"))
     local = [RectRegion(r.x - x0, r.y - y0, r.width, r.height) for r in clipped]
     selected = np.zeros(rgb.shape[:2], dtype=np.uint8)
-    for r in local:
+    for r in local[:len(rectangles)]:
         selected[r.y:r.y + r.height, r.x:r.x + r.width] = 255
+    # Rasterize only the path, never its bounding rectangle. Fixed-point centers
+    # retain subpixel coordinates after zooming; round caps also support clicks.
+    for stroke, _ in brushes:
+        points = np.round((np.asarray(stroke.points) - (x0, y0)) * 256).astype(np.int32)
+        if len(points) > 1:
+            cv2.polylines(selected, [points], False, 255, max(1, round(stroke.width)), cv2.LINE_8, shift=8)
+        for point in points:
+            cv2.circle(selected, tuple(point), round(stroke.width * 128), 255, -1, cv2.LINE_8, shift=8)
 
     # Closing removes narrow dark strokes from the background estimate while
     # retaining slow illumination gradients. Per-channel contrast catches color ink.
@@ -114,6 +126,16 @@ def clean_regions(img: Image.Image, regions: Sequence[RectRegion], radius: int =
     if opts.detect_lines:
         for r in local:
             pred, supported = _rule_background(rgb, paper, selected, r)
+            # Apply the same bilateral test vertically for tables and answer grids.
+            vertical, vertical_support = _rule_background(
+                rgb.swapaxes(0, 1), paper.swapaxes(0, 1), selected.T,
+                RectRegion(r.y, r.x, r.height, r.width))
+            vertical = vertical.swapaxes(0, 1)
+            vertical_support = vertical_support.T
+            intersection = supported & vertical_support
+            pred[vertical_support & ~supported] = vertical[vertical_support & ~supported]
+            pred[intersection] = np.minimum(pred[intersection], vertical[intersection])
+            supported |= vertical_support
             roi = np.s_[r.y:r.y + r.height, r.x:r.x + r.width]
             background[roi][supported] = pred[supported]
             rules[roi] |= supported
@@ -145,7 +167,8 @@ def clean_regions(img: Image.Image, regions: Sequence[RectRegion], radius: int =
     if not np.any(result[mask > 0] != rgb[mask > 0]):
         return img, len(clipped)
     # Preserve ALL non-mask pixels exactly, including alpha and selection exterior.
-    output = np.array(img.convert("RGBA") if "A" in img.getbands() else img.convert("RGB"))
+    output_mode = "RGBA" if "A" in img.getbands() else "RGB"
+    output = np.array(img if img.mode == output_mode else img.convert(output_mode))
     crop = output[y0:y1, x0:x1, :3]
     crop[mask > 0] = result[mask > 0]
     return Image.fromarray(output), len(clipped)

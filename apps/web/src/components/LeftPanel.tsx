@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import type { NaturalnessParams, ScanMode, ScanDetail } from "@hw-layout/shared";
 import type { SelectionRect, StageView } from "./CanvasStage.js";
+import type { CleanupTool } from '../lib/cleanSelection.js';
 
 /** LeftPanel 所需的项目视图（多页改造后从 activePage 派生）。 */
 type LeftPanelProject = Pick<
@@ -13,6 +14,12 @@ interface LeftPanelProps {
   selectedId: string | null;
   selectMode: boolean;
   selections: SelectionRect[];
+  strokeCount: number;
+  cleanTool: CleanupTool;
+  brushWidth: number;
+  onCleanTool: (tool: CleanupTool) => void;
+  onBrushWidth: (width: number) => void;
+  onUndoStroke: () => void;
   cleaning: boolean;
   processingOperation: "clean" | "scan" | null;
   cleanError: string | null;
@@ -29,6 +36,7 @@ interface LeftPanelProps {
   onScanMode: (mode: ScanMode) => void;
   onScanDetail: (detail: ScanDetail) => void;
   onPrepareScan: () => void;
+  onCancelProcessing: () => void;
   compareOriginal: boolean;
   onCompareOriginal: () => void;
   onApplyClean: () => void;
@@ -52,12 +60,13 @@ export function LeftPanel({
   selectedId,
   selectMode,
   selections,
+  strokeCount, cleanTool, brushWidth, onCleanTool, onBrushWidth, onUndoStroke,
   cleaning,
   processingOperation,
   cleanError,
   canUndoClean, cleanStrength, onCleanStrength, preserveRules, onPreserveRules,
   hasPreview, compareOriginal, onCompareOriginal, onApplyClean, onCancelClean,
-  previewOperation, undoOperation, scanMode, scanDetail, onScanMode, onScanDetail, onPrepareScan,
+  previewOperation, undoOperation, scanMode, scanDetail, onScanMode, onScanDetail, onPrepareScan, onCancelProcessing,
   onUpload,
   onAddText,
   onSelectText,
@@ -70,6 +79,7 @@ export function LeftPanel({
 }: LeftPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const n = project.naturalness;
+  const selectionCount = selections.length + strokeCount;
   const previewLabel = previewOperation === "scan" ? "扫描" : "清除";
   const previewControls = hasPreview && <div role="status">
     <p className="hint">预览尚未保存。切换原图检查细节，或取消后调整设置。</p>
@@ -80,6 +90,7 @@ export function LeftPanel({
 
   return (
     <aside className="app__left">
+      <div className="left-content">
       <p className="panel__title">扫描稿</p>
       <div
         className="upload-area"
@@ -125,10 +136,23 @@ export function LeftPanel({
         disabled={cleaning || hasPreview || !project.backgroundImage}>
         {processingOperation === "scan" ? "扫描处理中…" : "预览扫描"}
       </button>
-      {previewOperation === "scan" && previewControls}
 
       <p className="panel__title">清除字迹</p>
-      <p className="hint">紧贴字迹框选，避开印刷内容。选区内的印刷字也可能被擦掉；与笔迹重叠的原文无法保证恢复。</p>
+      <p className="hint">矩形用于整块区域，画笔可沿笔迹精细涂选。避开印刷内容；与笔迹重叠的原文无法保证恢复。</p>
+      <label className="field">选区工具
+        <select aria-label="选区工具" value={cleanTool} disabled={cleaning || hasPreview || !project.backgroundImage}
+          onChange={e => onCleanTool(e.target.value as CleanupTool)}>
+          <option value="rectangle">矩形框选</option><option value="brush">精细画笔</option>
+        </select>
+      </label>
+      {cleanTool === 'brush' && <>
+        <label className="field">画笔粗细：{brushWidth} 像素
+          <input aria-label="画笔粗细" type="range" min={2} max={160} step={1} value={brushWidth}
+            disabled={cleaning || hasPreview} onChange={e => onBrushWidth(Number(e.target.value))} />
+        </label>
+        <button className="btn" disabled={!strokeCount || cleaning || hasPreview} onClick={onUndoStroke}>撤销上一笔选区</button>
+        <p className="hint">红色涂层仅表示选区。先预览，确认后应用；可放大画布处理细节。</p>
+      </>}
       <label className="field">
         清除力度
         <select value={cleanStrength} disabled={cleaning || hasPreview}
@@ -140,9 +164,8 @@ export function LeftPanel({
       </label>
       <label className="toggle">
         <input type="checkbox" checked={preserveRules} disabled={cleaning || hasPreview}
-          onChange={(e) => onPreserveRules(e.target.checked)} />保留横线
+          onChange={(e) => onPreserveRules(e.target.checked)} />保留横线 / 表格竖线
       </label>
-      {previewOperation === "clean" && previewControls}
       <label className="toggle">
         <input
           type="checkbox"
@@ -150,44 +173,8 @@ export function LeftPanel({
           disabled={cleaning || hasPreview || !project.backgroundImage}
           onChange={(e) => onToggleSelectMode(e.target.checked)}
         />
-        框选模式
+        {cleanTool === 'brush' ? '画笔模式' : '框选模式'}
       </label>
-      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-        <button
-          className="btn btn--primary"
-          style={{ flex: 1 }}
-          disabled={selections.length === 0 || cleaning || hasPreview || !project.backgroundImage}
-          onClick={onClearRegion}
-          title={selections.length === 0 ? "请先框选区域" : `清除 ${selections.length} 个区域`}
-        >
-          {processingOperation === "clean" ? "处理中…" : `预览清除 (${selections.length})`}
-        </button>
-        <button
-          className="btn"
-          disabled={selections.length === 0 || cleaning || hasPreview}
-          onClick={onClearSelections}
-          title="清空已框选区域"
-        >
-          ✕
-        </button>
-      </div>
-      {canUndoClean && (
-        <button
-          className="btn"
-          style={{ width: "100%", marginBottom: 8 }}
-          onClick={onUndoClean}
-          disabled={cleaning || hasPreview}
-          title="撤销最近一次背景处理，恢复上一张背景"
-        >
-          {undoOperation === "scan" ? "↶ 撤销扫描" : "↶ 撤销清除"}
-        </button>
-      )}
-      {cleanError && (
-        <p className="err-msg" title={cleanError}>
-          ⚠ {cleanError}
-        </p>
-      )}
-
       <p className="panel__title" style={{ marginTop: 20 }}>
         文本对象
       </p>
@@ -291,6 +278,27 @@ export function LeftPanel({
         • 按住 空格 + 拖拽：平移视图<br />
         • 双击文本：编辑内容
       </p>
+      </div>
+      <div className="cleanup-actions" role="region" aria-label="图片处理操作">
+        {cleanError && <p className="err-msg" role="alert" title={cleanError}>⚠ {cleanError}</p>}
+        {cleaning ? <div role="status">
+          <p className="hint">{processingOperation === 'scan' ? '正在处理扫描图…' : '正在处理清除结果…'}</p>
+          <button className="btn" onClick={onCancelProcessing}>取消处理</button>
+        </div> : hasPreview ? previewControls : <>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn btn--primary" style={{ flex: 1 }} onClick={onClearRegion}
+              disabled={selectionCount === 0 || !project.backgroundImage}
+              title={selectionCount === 0 ? '请先选择擦除区域' : `清除 ${selectionCount} 个区域`}>
+              预览清除 ({selectionCount})
+            </button>
+            <button className="btn" disabled={selectionCount === 0} onClick={onClearSelections} title="清空已框选区域">✕</button>
+          </div>
+          {canUndoClean && <button className="btn" style={{ width: '100%', marginTop: 8 }} onClick={onUndoClean}
+            title="撤销最近一次背景处理，恢复上一张背景">
+            {undoOperation === 'scan' ? '↶ 撤销扫描' : '↶ 撤销清除'}
+          </button>}
+        </>}
+      </div>
     </aside>
   );
 }

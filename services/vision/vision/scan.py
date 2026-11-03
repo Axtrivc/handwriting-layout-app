@@ -40,6 +40,14 @@ def prepare_scan(img: Image.Image, mode: ScanMode = "bw", detail: ScanDetail = "
         pixels = np.where(normalized <= threshold, 0, 255).astype(np.uint8)
     else:
         pixels = normalized.round().astype(np.uint8)
+    if "A" in img.getbands():
+        # The tone operation ran on the visible image over white. Convert that
+        # result back to straight-alpha colors before reattaching the alpha;
+        # otherwise translucent strokes would be blended with white twice.
+        alpha = np.asarray(img.getchannel('A'), dtype=np.float32) / 255
+        pixels = np.where(alpha > 0,
+            np.clip((pixels.astype(np.float32) - 255 * (1 - alpha)) / np.maximum(alpha, 1 / 255), 0, 255),
+            255).round().astype(np.uint8)
     result = Image.fromarray(pixels).convert("RGB")
     if "A" in img.getbands():
         result.putalpha(img.getchannel("A"))

@@ -74,7 +74,10 @@ async function request<T>(
 ): Promise<T> {
   const base = getApiBase();
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const onAbort = () => ctrl.abort(init.signal?.reason);
+  if (init.signal?.aborted) onAbort();
+  else init.signal?.addEventListener('abort', onAbort, { once: true });
+  const timer = setTimeout(() => ctrl.abort(new DOMException('请求超时', 'TimeoutError')), timeoutMs);
   try {
     const res = await fetch(`${base}${path}`, { ...init, signal: ctrl.signal });
     if (!res.ok) {
@@ -88,6 +91,7 @@ async function request<T>(
     return (await res.json()) as T;
   } finally {
     clearTimeout(timer);
+    init.signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -122,17 +126,19 @@ export async function checkHealth(): Promise<ConnectionStatus> {
 
 export async function cleanRegion(
   req: CleanRegionRequest,
+  signal?: AbortSignal,
 ): Promise<CleanRegionResponse> {
   return request<CleanRegionResponse>("/clean-region", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
+    signal,
   }, 60000);
 }
 
-export async function prepareScan(req: PrepareScanRequest): Promise<PrepareScanResponse> {
+export async function prepareScan(req: PrepareScanRequest, signal?: AbortSignal): Promise<PrepareScanResponse> {
   return request<PrepareScanResponse>("/prepare-scan", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req), signal,
   }, 60000);
 }
 

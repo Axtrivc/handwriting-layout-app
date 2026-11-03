@@ -3,6 +3,7 @@ import { createEmptyProject, deserializeProject, serializeProject, DEFAULT_RENDE
 import { planGlyphBatch } from '../apps/web/src/lib/glyphBatch.ts';
 
 const project = createEmptyProject();
+project.pages[0].cleanHistory = [{ beforeImage: 'before', afterImage: 'after', regions: [], operation: 'clean', strokes: [{ points: [2.5, 3.25, 20, 30], width: 8 }] }];
 project.pages[0].textObjects.push({ id: 'text', text: '保存测试', x: 10, y: 20, zIndex: 0, style: { ...DEFAULT_TEXT_STYLE }, naturalnessSeed: 42, renderMode: 'handwritingGlyph', handwritingProfileId: 'profile' });
 project.handwritingProfiles.push({ id: 'profile', name: '笔迹', createdAt: 'now', updatedAt: 'now',
   sampleSets: [{ id: 'sample', profileId: 'profile', name: '样本', imageBase64: 'image', sourceImageWidth: 100, sourceImageHeight: 80, createdAt: 'now', status: 'imported' }],
@@ -39,6 +40,9 @@ const invalid = [
   [p => { p.handwritingProfiles[0].sampleSets.push(p.handwritingProfiles[0].sampleSets[0]); }, '重复 ID'],
   [p => { p.handwritingProfiles[0].defaultRenderSettings.scale = 0; }, 'scale'],
   [p => { p.pages[0].cleanHistory = [{ beforeImage: 'a', afterImage: 'b', regions: [{ x: 0, y: 0, width: -1, height: 2 }] }]; }, 'regions[0].width'],
+  [p => { p.pages[0].cleanHistory[0].strokes[0].points = [1, 2, 3]; }, '.points'],
+  [p => { p.pages[0].cleanHistory[0].strokes[0].points = [1, -3]; }, '.points'],
+  [p => { p.pages[0].cleanHistory[0].strokes[0].width = 0; }, '.width'],
   [p => { p.settings.naturalness.opacityJitter = -1; }, 'opacityJitter'],
 ];
 for (const [mutate, path] of invalid) {

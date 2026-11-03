@@ -5,15 +5,21 @@ import {
   Image as KonvaImage,
   Transformer,
   Rect,
+  Line,
+  Circle,
+  Group,
 } from "react-konva";
 import type Konva from "konva";
 import {
   type HandwritingProfile,
   type NaturalnessParams,
   type TextObject,
+  type CleanupStroke,
 } from "@hw-layout/shared";
 import { TextObjectView } from "./TextObjectView.js";
-import { clipSelection } from "../lib/cleanSelection.js";
+import { clipSelection, type CleanupTool, type SelectionStroke } from "../lib/cleanSelection.js";
+import { useCanvasViewport } from "../lib/useCanvasViewport.js";
+import { MAX_VIEW_SCALE, MIN_VIEW_SCALE } from "../lib/viewport.js";
 
 /**
  * CanvasStage 所需的项目视图（多页改造后从 activePage 派生）。
@@ -57,6 +63,10 @@ interface CanvasStageProps {
   selectMode: boolean;
   /** 当前已确认的框选区域 */
   selections: SelectionRect[];
+  cleanTool: CleanupTool;
+  brushWidth: number;
+  strokes: SelectionStroke[];
+  onStrokeEnd: (stroke: CleanupStroke) => void;
   /** 框选区域被调整时回调（id + 新几何） */
   onSelectionUpdate?: (id: string, rect: Omit<SelectionRect, "id">) => void;
   /** 框选结束时回调 */
@@ -87,6 +97,7 @@ export function CanvasStage({
   onChange,
   selectMode,
   selections,
+  cleanTool, brushWidth, strokes, onStrokeEnd,
   onSelectionUpdate,
   onSelectionEnd,
   glyphImages,
@@ -99,8 +110,12 @@ export function CanvasStage({
   const selRectRefs = useRef<Map<string, Konva.Rect>>(new Map());
   const [draft, setDraft] = useState<DraftRect | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const [draftStroke, setDraftStroke] = useState<CleanupStroke | null>(null);
+  const strokeRef = useRef<CleanupStroke | null>(null);
+  const [brushPointer, setBrushPointer] = useState<{ x: number; y: number } | null>(null);
   // 空格键按下时进入平移模式
   const [spaceDown, setSpaceDown] = useState(false);
+  const viewport = useCanvasViewport(project.width, project.height);
 
   // 按 zIndex 升序渲染（数值大在上层）
   const sortedTexts = useMemo(
@@ -125,7 +140,7 @@ export function CanvasStage({
   useEffect(() => {
     const tr = selTransformerRef.current;
     if (!tr) return;
-    if (!selectMode) {
+    if (!selectMode || cleanTool !== 'rectangle') {
       tr.nodes([]);
       return;
     }
@@ -134,7 +149,7 @@ export function CanvasStage({
     const node = last ? selRectRefs.current.get(last.id) : null;
     tr.nodes(node ? [node] : []);
     tr.getLayer()?.batchDraw();
-  }, [selectMode, selections]);
+  }, [selectMode, cleanTool, selections]);
 
   // 全局空格键监听：按下进入平移模式
   useEffect(() => {
@@ -147,11 +162,17 @@ export function CanvasStage({
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") setSpaceDown(false);
     };
+    const onBlur = () => {
+      setSpaceDown(false); setDraft(null); dragStart.current = null;
+      setDraftStroke(null); strokeRef.current = null; setBrushPointer(null);
+    };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
     };
   }, []);
 
@@ -184,14 +205,33 @@ export function CanvasStage({
     }
     const pos = getRelativeCanvasPos();
     if (!pos) return;
+    if (cleanTool === 'brush') {
+      const pointer = stageRef.current?.getRelativePointerPosition();
+      if (!pointer || pointer.x < 0 || pointer.y < 0 || pointer.x >= project.width || pointer.y >= project.height) return;
+      const stroke = { points: [pos.x, pos.y], width: brushWidth };
+      strokeRef.current = stroke;
+      setDraftStroke(stroke);
+      return;
+    }
     dragStart.current = pos;
     setDraft({ x: pos.x, y: pos.y, width: 0, height: 0 });
   };
 
   const handleMouseMove = () => {
-    if (!selectMode || !dragStart.current) return;
+    if (!selectMode || spaceDown) return;
     const pos = getRelativeCanvasPos();
     if (!pos) return;
+    if (cleanTool === 'brush') {
+      setBrushPointer(pos);
+      const stroke = strokeRef.current;
+      if (!stroke || stroke.points.length >= 8192) return;
+      const x = stroke.points.at(-2)!, y = stroke.points.at(-1)!;
+      if (Math.hypot(pos.x - x, pos.y - y) < Math.max(0.5, stroke.width / 8)) return;
+      const next = { ...stroke, points: [...stroke.points, pos.x, pos.y] };
+      strokeRef.current = next; setDraftStroke(next);
+      return;
+    }
+    if (!dragStart.current) return;
     const start = dragStart.current;
     setDraft({
       x: Math.min(start.x, pos.x),
@@ -202,7 +242,17 @@ export function CanvasStage({
   };
 
   const handleMouseUp = () => {
-    if (!selectMode || !draft) return;
+    if (!selectMode) return;
+    if (strokeRef.current) {
+      const stroke = strokeRef.current;
+      const pos = getRelativeCanvasPos();
+      if (pos && stroke.points.length < 8192 && (pos.x !== stroke.points.at(-2) || pos.y !== stroke.points.at(-1))) {
+        onStrokeEnd({ ...stroke, points: [...stroke.points, pos.x, pos.y] });
+      } else onStrokeEnd(stroke);
+      strokeRef.current = null; setDraftStroke(null);
+      return;
+    }
+    if (!draft) return;
     if (draft.width >= 4 && draft.height >= 4) {
       onSelectionEnd({ ...draft });
     }
@@ -213,33 +263,19 @@ export function CanvasStage({
   // 滚轮缩放（以鼠标为中心）
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
+    if (dragStart.current || strokeRef.current) return;
     const stage = stageRef.current;
     if (!stage) return;
-    const oldScale = stage.scaleX();
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
-
     const scaleBy = e.evt.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const newScale = clamp(oldScale * scaleBy, 0.1, 5);
-
-    // 鼠标指向的画布坐标
-    const mousePointTo = {
-      x: (pointer.x - stage.x()) / oldScale,
-      y: (pointer.y - stage.y()) / oldScale,
-    };
-    stage.scale({ x: newScale, y: newScale });
-    stage.position({
-      x: pointer.x - mousePointTo.x * newScale,
-      y: pointer.y - mousePointTo.y * newScale,
-    });
+    viewport.zoom(stage.scaleX() * scaleBy, pointer);
   };
 
   useEffect(() => {
-    if (!selectMode) {
-      setDraft(null);
-      dragStart.current = null;
-    }
-  }, [selectMode]);
+    setDraft(null); dragStart.current = null;
+    setDraftStroke(null); strokeRef.current = null; setBrushPointer(null);
+  }, [selectMode, cleanTool, spaceDown]);
 
   const cursor = spaceDown
     ? "grab"
@@ -248,17 +284,33 @@ export function CanvasStage({
       : "default";
 
   return (
+    <div className="canvas-editor">
+      <div className="canvas-tools" role="toolbar" aria-label="画布视图">
+        <button className="btn btn--xs" onClick={viewport.fit}>适合窗口</button>
+        <button className="btn btn--xs" onClick={() => viewport.zoom(1)} title="按原图像素查看">100%</button>
+        <button className="btn btn--xs" aria-label="缩小画布" disabled={viewport.view.scale <= MIN_VIEW_SCALE}
+          onClick={() => viewport.zoom(viewport.view.scale / 1.25)}>−</button>
+        <output aria-label="画布缩放比例">{Math.round(viewport.view.scale * 100)}%</output>
+        <button className="btn btn--xs" aria-label="放大画布" disabled={viewport.view.scale >= MAX_VIEW_SCALE}
+          onClick={() => viewport.zoom(viewport.view.scale * 1.25)}>＋</button>
+        <span className="hint">{project.width} × {project.height} · 空格拖动</span>
+      </div>
+      <div className="canvas-viewport" ref={viewport.containerRef}
+        data-view-x={viewport.view.x} data-view-y={viewport.view.y} data-view-scale={viewport.view.scale}>
     <Stage
       ref={stageRef}
-      width={project.width}
-      height={project.height}
+      width={viewport.size.width}
+      height={viewport.size.height}
+      x={viewport.view.x} y={viewport.view.y}
+      scaleX={viewport.view.scale} scaleY={viewport.view.scale}
       style={{ cursor, background: "#e9e9ef" }}
       draggable={spaceDown}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseLeave={() => { handleMouseUp(); setBrushPointer(null); }}
       onWheel={handleWheel}
+      onDragEnd={e => { if (e.target === stageRef.current) viewport.pan(e.target.x(), e.target.y()); }}
     >
       <Layer>
         <Rect width={project.width} height={project.height} fill="white" listening={false} />
@@ -305,11 +357,11 @@ export function CanvasStage({
               width={s.width}
               height={s.height}
               stroke="#ff4d4f"
-              strokeWidth={2.5 / (stageRef.current?.scaleX() ?? 1)}
+              strokeWidth={2.5 / viewport.view.scale}
               dash={[8, 4]}
               fill="rgba(255,77,79,0.12)"
-              listening={selectMode}
-              draggable={selectMode && !spaceDown}
+              listening={selectMode && cleanTool === 'rectangle'}
+              draggable={selectMode && cleanTool === 'rectangle' && !spaceDown}
               onDragEnd={(e) => {
                 const rect = { x: clamp(e.target.x(), 0, project.width - s.width),
                   y: clamp(e.target.y(), 0, project.height - s.height), width: s.width, height: s.height };
@@ -336,6 +388,19 @@ export function CanvasStage({
             />
           ))}
 
+        <Group clipX={0} clipY={0} clipWidth={project.width} clipHeight={project.height} listening={false}>
+          {[...strokes, ...(draftStroke ? [{ ...draftStroke, id: 'draft' }] : [])].map(stroke =>
+            stroke.points.length === 2
+              ? <Circle key={stroke.id} x={stroke.points[0]} y={stroke.points[1]} radius={stroke.width / 2}
+                  fill="#ff4d4f" opacity={0.35} />
+              : <Line key={stroke.id} points={stroke.points} stroke="#ff4d4f" strokeWidth={stroke.width}
+                  opacity={0.35} lineCap="round" lineJoin="round" />
+          )}
+          {selectMode && cleanTool === 'brush' && brushPointer && !spaceDown &&
+            <Circle x={brushPointer.x} y={brushPointer.y} radius={brushWidth / 2}
+              stroke="#d32f2f" strokeWidth={1.5 / viewport.view.scale} />}
+        </Group>
+
         {/* 正在拖拽的临时框（加粗 + 高对比，确保可见） */}
         {draft && (
           <Rect
@@ -344,7 +409,7 @@ export function CanvasStage({
             width={draft.width}
             height={draft.height}
             stroke="#ff4d4f"
-            strokeWidth={2.5}
+            strokeWidth={2.5 / viewport.view.scale}
             dash={[6, 3]}
             fill="rgba(255,77,79,0.15)"
             listening={false}
@@ -390,6 +455,8 @@ export function CanvasStage({
         />
       </Layer>
     </Stage>
+      </div>
+    </div>
   );
 }
 

@@ -22,18 +22,21 @@ from vision import (  # noqa: E402  -- sys.path 注入后再导入
     clean_regions,
     image_to_b64,
 )
+from vision.regions import BrushStroke
 
 router = APIRouter()
 
 
 @router.post("/clean-region", response_model=CleanRegionResponse)
 def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
-    """对用户手动框选的区域做 inpaint 去字迹。
+    """对用户框选或涂选的区域去字迹，可保留有外部证据的横竖线。
 
     合规约束：仅处理请求中显式给定的区域，不做自动整页识别。
     """
-    if not req.regions:
-        raise HTTPException(status_code=400, detail="regions 不能为空")
+    if not req.regions and not req.strokes:
+        raise HTTPException(status_code=400, detail="请先框选或用画笔选择要清除的区域")
+    if sum(len(stroke.points) for stroke in req.strokes) > 200_000:
+        raise HTTPException(status_code=400, detail="画笔点数过多，请分次处理")
 
     try:
         img = b64_to_image(req.image, req.mime)
@@ -44,10 +47,14 @@ def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
         RectRegion(x=r.x, y=r.y, width=r.width, height=r.height)
         for r in req.regions
     ]
+    if max(img.size) > 16384 or img.width * img.height > 64_000_000:
+        raise HTTPException(status_code=400, detail="图片超过当前画布尺寸上限")
+    strokes = [BrushStroke(list(zip(stroke.points[::2], stroke.points[1::2])), stroke.width) for stroke in req.strokes]
 
     result, processed = clean_regions(
         img,
         regions,
+        strokes=strokes,
         options=InpaintOptions(
             algorithm="ns", radius=DEFAULT_INPAINT_RADIUS,
             contrast={"gentle": 22, "standard": 12, "strong": 6}[req.strength],
