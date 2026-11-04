@@ -94,11 +94,11 @@ export function LeftPanel({
   return (
     <aside className="app__left">
       <div className="left-content">
-      <p className="panel__title">手写文字图层</p>
-      <p className="hint">文字独立叠加在试卷上，可拖动、编辑、调整字号并随图片导出。</p>
-      <button className="btn btn--primary" disabled={cleaning || hasPreview} onClick={onAddHandwriting}>＋ 添加手写文字</button>
-      <button className="btn" onClick={onOpenHandwriting}>我的字迹 / 采样字帖</button>
-      <p className="hint">有活动字形档案时优先使用自己的字迹；无样本时使用内置英文字体。中文和个人笔迹请采集字形，缺字会提示。</p>
+      <nav className="workflow-nav" aria-label="编辑步骤">
+        {[['scan-step','扫描'],['erase-step','擦除'],['write-step','排版']].map(([id,label], i) =>
+          <button key={id} onClick={() => { const section = document.getElementById(id) as HTMLDetailsElement; section.open = true; section.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}><span>0{i+1}</span>{label}</button>)}
+      </nav>
+      <details className="workflow-step" id="scan-step" open><summary><span>01</span>整理扫描稿</summary>
       <p className="panel__title">扫描稿</p>
       <div
         className="upload-area"
@@ -147,7 +147,8 @@ export function LeftPanel({
         {processingOperation === "scan" ? "扫描处理中…" : "预览扫描"}
       </button>
 
-      <p className="panel__title">清除字迹</p>
+      </details>
+      <details className="workflow-step" id="erase-step" open><summary><span>02</span>清理笔迹</summary>
       <button className="btn" disabled={cleaning || hasPreview || !project.backgroundImage} onClick={onAutoColor}>自动去红蓝笔（预览）</button>
       <p className="hint">整页识别红蓝颜色，无需逐笔框选。也会选中同色印刷内容，请比较原图后应用；黑色笔迹仍需选区。已转黑白时会尝试使用扫描历史中的彩色原图。</p>
       <p className="hint">矩形用于整块区域，画笔可沿笔迹精细涂选。避开印刷内容；与笔迹重叠的原文无法保证恢复。</p>
@@ -190,6 +191,13 @@ export function LeftPanel({
         />
         {cleanTool === 'brush' ? '画笔模式' : '框选模式'}
       </label>
+      </details>
+      <details className="workflow-step" id="write-step" open><summary><span>03</span>手写排版</summary>
+      <p className="panel__title">手写文字图层</p>
+      <p className="hint">文字独立叠加在试卷上，可拖动、编辑、调整字号并随图片导出。</p>
+      <button className="btn btn--primary" disabled={cleaning || hasPreview} onClick={onAddHandwriting}>＋ 添加手写文字</button>
+      <button className="btn" onClick={onOpenHandwriting}>我的字迹 / 采样字帖</button>
+      <p className="hint">有活动字形档案时优先使用自己的字迹；无样本时使用内置英文字体。中文和个人笔迹请采集字形，缺字会提示。</p>
       <p className="panel__title" style={{ marginTop: 20 }}>
         文本对象
       </p>
@@ -293,6 +301,7 @@ export function LeftPanel({
         • 按住 空格 + 拖拽：平移视图<br />
         • 双击文本：编辑内容
       </p>
+      </details>
       </div>
       <div className="cleanup-actions" role="region" aria-label="图片处理操作">
         {cleanError && <p className="err-msg" role="alert" title={cleanError}>⚠ {cleanError}</p>}

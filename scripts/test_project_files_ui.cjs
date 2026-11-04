@@ -80,7 +80,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     assert.equal((await save()).name, '导入测试');
     console.log('PASS: invalid structure/image, declined replacement and cancelled picker retain the document; valid import/save succeeds');
 
-    await page.locator('summary').click(); await page.locator('.hw-item__name').click();
+    await page.locator('.hw-panel > details > summary').click(); await page.locator('.hw-item__name').click();
     const open = index => page.getByRole('button', { name: '切割字形', exact: true }).nth(index).click();
     const detect = () => page.getByRole('button', { name: '🔍 自动检测字形区域', exact: true }).click();
     const count = n => page.waitForFunction(n => document.querySelectorAll('.cand-chip').length === n, n);

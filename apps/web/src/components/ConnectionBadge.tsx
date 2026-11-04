@@ -29,9 +29,6 @@ export function ConnectionBadge({
       <span className="conn__label" title={apiBase}>
         {label}
       </span>
-      {status.kind === "connected" && "version" in status && (
-        <span className="conn__version">v{status.version}</span>
-      )}
       <button
         className="btn btn--xs"
         onClick={onReconnect}
@@ -84,7 +81,7 @@ function describe(status: ConnectionStatus): { label: string } {
     case "connecting":
       return { label: "连接中…" };
     case "connected":
-      return { label: "已连接" };
+      return { label: "处理服务就绪" };
     case "disconnected":
       return { label: "未连接" };
     case "error":

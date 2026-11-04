@@ -21,7 +21,7 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c', 'import sys
     }
     await page.goto('http://localhost:5173');
     await page.getByRole('button', { name: '+ 添加文本框', exact: true }).click();
-    await page.locator('summary').click();
+    await page.locator('.hw-panel > details > summary').click();
     await page.getByPlaceholder('新档案名称（如：我的笔迹）').fill('测试<档案>');
     await page.getByRole('button', { name: '新建', exact: true }).click();
     await page.locator('.hw-item__name').click();
@@ -34,6 +34,19 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c', 'import sys
     assert.equal(await preview.locator('h1').innerText(), '测试<档案> · 手写采样');
     assert.equal(await preview.locator('.cell').count(), 3);
     assert.deepEqual(await preview.locator('.cell').allTextContents(), ['', '', '']);
+    await page.getByRole('button', { name: /^基础字帖/ }).click();
+    const basicLabels=(await download('下载标注顺序')).replaceAll('\n','');
+    assert.equal([...basicLabels].filter(c=>c==='0').length,5);
+    assert.equal([...basicLabels].filter(c=>c==='A').length,3);
+    assert.equal(new Set([...basicLabels].filter(c=>/\p{Script=Han}/u.test(c))).size,300);
+    await preview.setContent(await download('下载采样页'));
+    assert.equal(await preview.locator('.cell').count(),[...basicLabels].length);
+    const basicPdf=await preview.pdf({preferCSSPageSize:true});
+    assert.equal((basicPdf.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length,Math.ceil([...basicLabels].length/48));
+    await page.getByRole('button', { name: /^进阶字帖/ }).click();
+    const advancedLabels=(await download('下载标注顺序')).replaceAll('\n','');
+    assert.equal(new Set([...advancedLabels].filter(c=>/\p{Script=Han}/u.test(c))).size,2500);
+    assert.equal([...advancedLabels].filter(c=>c==='A').length,5);
     await page.getByRole('button', { name: '起步 500 字', exact: true }).click();
     await preview.setContent(await download('下载采样页'));
     assert.equal(await preview.locator('.page').count(), 11);

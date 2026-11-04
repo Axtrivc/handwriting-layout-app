@@ -36,7 +36,7 @@ const fixture=execFileSync('services/api/.venv/bin/python',['-c','import sys; sy
   return Array.from(c.getContext('2d').getImageData(x,y,1,1).data);
  });assert.equal(visible[3],255,'duplicate background must decode in editor');
  await download('保存');assert.equal(await page.locator('.dirty-dot').count(),0);
- await page.locator('summary').click();
+ await page.locator('.hw-panel > details > summary').click();
  await page.getByPlaceholder('新档案名称（如：我的笔迹）').fill('测试档案');
  await page.getByRole('button',{name:'新建',exact:true}).click();assert.equal(await page.locator('.dirty-dot').count(),1,'profile edits must mark dirty');
  // Use the renderer directly to inspect rotation and deterministic naturalness.

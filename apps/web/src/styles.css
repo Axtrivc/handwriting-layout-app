@@ -1,11 +1,11 @@
 @font-face { font-family: Caveat; src: url("/fonts/Caveat.ttf") format("truetype"); font-weight: 400 700; font-display: swap; }
 :root {
-  --bg: #f5f5f7;
+  --bg: #f4f3ef;
   --panel: #ffffff;
   --border: #d8d8df;
   --text: #1a1a1a;
   --muted: #6b6b76;
-  --accent: #2f6df6;
+  --accent: #22776b;
 }
 
 * {
@@ -28,8 +28,8 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 300px;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr) 280px;
+  grid-template-rows: 112px minmax(0, 1fr);
   height: 100vh;
 }
 
@@ -319,7 +319,7 @@ body {
 
 .canvas-wrap {
   width: 100%;
-  height: clamp(280px, calc(100vh - 320px), 900px);
+  height: clamp(280px, calc(100vh - 370px), 900px);
   flex-shrink: 0;
   overflow: hidden;
   background: #e9e9ef;
@@ -738,3 +738,68 @@ body {
   border-color: #1aa260;
   background: rgba(26, 162, 96, 0.1);
 }
+
+/* Workbench: a quiet document surface with clearly separated editing steps. */
+body { font-size: 14px; }
+.app__header { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto; grid-template-rows: 58px 54px; gap: 0 24px; padding: 0 24px; }
+.app-brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark { display: grid; place-items: center; width: 36px; height: 36px; background: #1f5149; color: #fff; border-radius: 12px; font: 24px serif; }
+.app-brand strong { font-size: 20px; letter-spacing: 3px; }
+.app-brand div > span { display: block; font-size: 10px; font-weight: 400; color: var(--muted); letter-spacing: 1px; }
+.document-name { display: flex; align-items: center; min-width: 0; }
+.document-name input { width: min(100%, 230px); border: 1px solid transparent; border-radius: 6px; padding: 7px 10px; background: transparent; font: inherit; font-weight: 500; color: #46534e; }
+.document-name input:hover, .document-name input:focus { border-color: #b5cec7; background: #fafbf9; outline: none; }
+.app__header .header-tools { grid-column: 1 / -1; margin-left: 0 !important; border-top: 1px solid #edf0eb; width: 100%; height: 54px; flex-wrap: nowrap; overflow-x: auto; gap: 8px; }
+.app__header button { margin-left: 0; white-space: nowrap; }
+.header-tools > :nth-child(6) { margin-left: auto; }
+.app__header .conn { margin-left: auto; font-size: 11px; }
+.app__center { padding: 22px; gap: 18px; background: radial-gradient(#d9ded6 0.6px, transparent 0.6px) 0 0 / 12px 12px; }
+.app__left, .app__right { border-color: #e3e7df; }
+.left-content { padding: 12px; }
+.workflow-nav { display: flex; gap: 6px; margin-bottom: 14px; }
+.workflow-nav button { flex: 1; border: 1px solid #e1e7df; border-radius: 9px; background: #f5f7f2; padding: 9px 3px; font: inherit; font-size: 12px; color: #36524a; cursor: pointer; }
+.workflow-nav span { font-size: 10px; margin-right: 5px; color: #7c9286; }
+.workflow-step { padding: 12px; margin-bottom: 12px; border: 1px solid #e2e7df; border-radius: 12px; background: #fff; scroll-margin-top: 12px; }
+.workflow-step > summary { cursor: pointer; font-size: 14px; font-weight: 650; color: #213d34; padding: 2px 0 9px; }
+.workflow-step > summary span { font-size: 10px; letter-spacing: 1px; color: #8b9d91; margin-right: 8px; }
+.workflow-step .panel__title { font-size: 12px; color: #67776d; margin: 10px 0; }
+.workflow-step .btn { max-width: 100%; white-space: normal; }
+.workflow-step .upload-area { min-height: 100px; padding: 18px 8px; background: #fafbf8; border-color: #b7cbbd; }
+.workflow-step .field { font-size: 12px; }
+.workflow-step .hint { font-size: 11px; line-height: 1.7; }
+.cleanup-actions { background: #f7faf5; box-shadow: 0 -3px 16px #25382b08; }
+.btn { border-radius: 7px; transition: background .15s, border-color .15s; }
+.btn--primary { background: #22776b; border-color: #22776b; }
+.btn--primary:hover:not(:disabled) { background: #195e54; border-color: #195e54; }
+.canvas-wrap { border: 1px solid #e0e4dc; border-radius: 12px; box-shadow: 0 8px 30px #3048380b; }
+.canvas-tools { background: #fff; }
+.page-panel, .hw-panel { border-color: #e0e4dc; border-radius: 12px; padding: 14px; }
+.app__right { padding: 22px 18px; }
+.app__right .panel__title { font-size: 12px; letter-spacing: .5px; color: #64776b; }
+.sample-sheet { background: #f9faf7; padding: 16px; border: 1px solid #e0e7dc; border-radius: 12px; }
+.sample-levels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.sample-level { text-align: left; cursor: pointer; border: 1px solid #d8e1d5; border-radius: 12px; padding: 16px; background: #fff; color: #35463a; font: inherit; }
+.sample-level strong, .sample-level span, .sample-level small { display: block; }
+.sample-level strong { font-size: 17px; margin-bottom: 10px; }
+.sample-level span, .sample-level small { font-size: 12px; line-height: 1.7; }
+.sample-level small { color: #748171; margin-top: 6px; }
+.sample-level.is-active { border-color: #22776b; background: #edf6ee; box-shadow: inset 0 0 0 1px #22776b; }
+.sample-count { color: #27644b; font-weight: 600; }
+.sample-preview { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; margin: 12px 0; }
+.sample-preview span { display: grid; place-items: center; aspect-ratio: 1; border: 1px dashed #cbd5c6; background: #fff; font: 20px serif; }
+@media(max-width: 1150px) { .app { grid-template-columns: 250px minmax(0,1fr) 230px; } .app__header { padding: 0 16px; gap: 0 14px; } .app__center { padding: 12px; } .sample-levels { grid-template-columns: 1fr; } .sample-preview { grid-template-columns: repeat(8,1fr); } }
+@media(max-width: 800px) { .app { grid-template-columns: 220px minmax(260px,1fr); } .app__right { grid-column: 2; max-height: 50vh; } .app__header .conn__label { display: none; } .app-brand div > span { display: none; } }
+
+.canvas-wrap { position: relative; }
+.workspace-welcome { position: absolute; inset: 70px 20px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2; pointer-events: none; text-align: center; color: #788779; }
+.workspace-welcome > span { font-size: 11px; letter-spacing: 2px; }
+.workspace-welcome strong { font: 26px/1.6 serif; color: #355a49; margin-top: 12px; }
+.workspace-welcome p { font-size: 12px; line-height: 1.9; }
+
+.workbook-entry { color: #22674d; background: #eff6ec; border-color: #cbdcc6; }
+.workbook-dialog { width: min(850px, 92vw); max-height: 88vh; border: 1px solid #d8e2d3; border-radius: 20px; padding: 28px; color: var(--text); background: #fffefb; box-shadow: 0 24px 90px #173c3433; }
+.workbook-dialog::backdrop { background: #163b3559; backdrop-filter: blur(3px); }
+.workbook-dialog > header { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.workbook-dialog h2 { font: 28px serif; margin: 8px 0 18px; color: #284d3c; }
+.eyebrow { font-size: 11px; color: #7d8b78; letter-spacing: 1px; }
+.workbook-steps { display: flex; flex-wrap: wrap; gap: 30px; font-size: 12px; color: #5e765b; padding: 14px 30px; background: #f0f5ec; border-radius: 10px; }

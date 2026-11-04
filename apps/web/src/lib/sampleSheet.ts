@@ -42,3 +42,18 @@ details{margin-top:5mm}textarea{width:100%;height:22mm;font-size:14pt}
 @media print{.page{margin:0}details{display:none}}
 </style></head><body>${content}</body></html>`;
 }
+
+export type SampleLevel = 'basic' | 'advanced' | 'custom';
+export const SAMPLE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+export const SAMPLE_DIGITS = '0123456789';
+export const SAMPLE_SYMBOLS = '，。！？；：“”‘’（）《》、…—+-×÷=<>%.,!?;:"\'()[]/';
+
+/** Repetitions remain in both the printed cells and matching label text. */
+export function expandSamplePractice(chars: string[], level: SampleLevel): string[] {
+  return chars.flatMap(char => {
+    const count = level === 'custom' ? 1 : /[0-9]/.test(char) ? 5 : /[A-Za-z]/.test(char)
+      ? (level === 'basic' ? 3 : 5) : /\p{Script=Han}/u.test(char)
+        ? (level === 'basic' ? 1 : 2) : (level === 'basic' ? 2 : 3);
+    return Array.from({ length: count }, () => char);
+  });
+}

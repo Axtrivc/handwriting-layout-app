@@ -81,7 +81,7 @@ export function createEmptyProject(): CanvasProject {
   return {
     appVersion: APP_VERSION,
     id: uid("project"),
-    name: "未命名项目",
+    name: "我的手写作品",
     pages: [firstPage],
     activePageId: firstPage.id,
     settings: {
@@ -162,7 +162,7 @@ export function deserializeProject(raw: string): LoadResult {
   const project: CanvasProject = {
     appVersion: typeof data.appVersion === "string" ? data.appVersion : APP_VERSION,
     id: typeof data.id === "string" ? data.id : uid("project"),
-    name: typeof data.name === "string" ? data.name : "未命名项目",
+    name: typeof data.name === "string" ? data.name : "我的手写作品",
     pages,
     activePageId,
     settings: normalizeSettings(data.settings, data),

@@ -1,3 +1,4 @@
+import { WorkbookDialog } from "./components/WorkbookDialog.js";
 import { useProjectFiles } from "./lib/useProjectFiles.js";
 import { useDocument } from "./lib/useDocument.js";
 import { useImageResource } from "./lib/useImageResource.js";
@@ -45,6 +46,7 @@ interface SegmenterTarget {
 }
 
 export default function App() {
+  const [workbookOpen, setWorkbookOpen] = useState(false);
   const { project, dirty, generation, edit: touchProject, updatePage,
     selectPage, replace: replaceDocument, markSaved } = useDocument();
   const latestDocument = useRef({ project, generation });
@@ -654,15 +656,20 @@ export default function App() {
 
   return (
     <div className="app">
+      {workbookOpen && <WorkbookDialog profile={hw.activeProfile ?? null} projectText={project.pages.flatMap(page => page.textObjects.map(obj => obj.text)).join("\n")} onClose={() => setWorkbookOpen(false)} />}
       <header className="app__header">
-        <span>
-          📝 {project.name}
+        <div className="app-brand"><span className="brand-mark">墨</span><div><strong>墨迹</strong><span>手写排版工作台</span></div></div>
+        <div className="document-name">
+          <input aria-label="作品名称" value={project.name === '未命名项目' ? '我的手写作品' : project.name}
+            onChange={e => touchProject(p => ({ ...p, name: e.target.value }))}
+            onBlur={() => { if (!project.name.trim()) touchProject(p => ({ ...p, name: '我的手写作品' })); }} />
           {dirty && <span className="dirty-dot" title="有未保存的修改">●</span>}
-        </span>
+        </div>
         <ConnectionBadge status={status} apiBase={apiBase} onReconnect={reconnect} onApiBaseChange={updateApiBase} />
         <div className="header-tools" style={{ marginLeft: 8 }}>
           <button className="btn" onClick={handleLoadProject} disabled={loadingProject} title="加载项目 JSON">{loadingProject ? "加载中…" : "加载"}</button>
           <button className="btn" onClick={handleSaveProject} title="保存为本地 JSON">保存</button>
+          <button className="btn workbook-entry" onClick={() => setWorkbookOpen(true)}>字帖工坊</button>
           <button className="btn" onClick={handleUndo} disabled={!activePage || !history.canUndo(activePage.id)} title="撤销 (Ctrl+Z)">↶</button>
           <button className="btn" onClick={handleRedo} disabled={!activePage || !history.canRedo(activePage.id)} title="重做 (Ctrl+Y)">↷</button>
           <select
@@ -740,6 +747,8 @@ export default function App() {
 
       <main className="app__center">
         <div className="canvas-wrap">
+          {activePage && !activePage.backgroundImage && !activePage.textObjects.length &&
+            <div className="workspace-welcome"><span>你的下一页，从这里开始</span><strong>让文字带上你的笔迹</strong><p>在左侧上传试卷，或展开「手写排版」添加文字。<br />第一次使用，可先到「我的字迹 / 采样字帖」准备字库。</p></div>}
           {activePage ? (
             <CanvasStage
               key={`${generation}:${activePage.id}:${uploadSequence.current.get(activePage.id) ?? 0}`}

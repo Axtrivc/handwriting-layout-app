@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { COMMON_SAMPLE_CHARACTERS, STARTER_SAMPLE_CHARACTERS } from '../packages/shared/dist/index.js';
-import { collectSampleCharacters, renderSampleSheet, samplePageLabels } from '../apps/web/src/lib/sampleSheet.ts';
+import { collectSampleCharacters, renderSampleSheet, samplePageLabels, expandSamplePractice, SAMPLE_ALPHABET, SAMPLE_DIGITS, SAMPLE_SYMBOLS } from '../apps/web/src/lib/sampleSheet.ts';
 
 assert.equal(new Set(COMMON_SAMPLE_CHARACTERS).size, 2500);
 assert.equal(new Set(STARTER_SAMPLE_CHARACTERS).size, 500);
@@ -20,3 +20,15 @@ assert.equal((html.match(/class="cell"><\/div>/g) ?? []).length, 500, 'writing c
 assert.ok(!html.includes('80%'));
 assert.ok(!renderSampleSheet(['<', '&', '>'], 'test').includes('<　&'));
 console.log('PASS: sampling list counts, missing characters, Unicode, blank writing cells, escaped HTML and 48-character pagination');
+
+const basic = collectSampleCharacters(Array.from(STARTER_SAMPLE_CHARACTERS).slice(0,300).join('') + SAMPLE_ALPHABET + SAMPLE_DIGITS + SAMPLE_SYMBOLS);
+const practice = expandSamplePractice(basic, 'basic');
+assert.equal(basic.filter(c => /\p{Script=Han}/u.test(c)).length,300);
+assert.equal(practice.filter(c=>c==='A').length,3);
+assert.equal(practice.filter(c=>c==='0').length,5);
+assert.equal(practice.filter(c=>c===basic[0]).length,1);
+assert.equal(expandSamplePractice([basic[0],'A','0','。'],'advanced').length,15);
+assert.equal(samplePageLabels(practice).join(''),practice.join(''));
+assert.equal((renderSampleSheet(practice,'基础字帖').match(/class="cell"><\/div>/g)||[]).length,practice.length);
+assert.ok(!expandSamplePractice(collectSampleCharacters('甲A0',new Set(['甲'])),'advanced').includes('甲'));
+console.log('PASS: mixed Chinese/English/digits, level repetitions, exact print/label alignment and missing glyph filtering');
