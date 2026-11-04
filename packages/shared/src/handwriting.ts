@@ -142,6 +142,11 @@ export function pickVariant<T>(
   if (variants.length === 0) return null;
   if (mode === "first") return variants[0];
 
+  // Avalanche the index-derived seed: modulo alone creates a visible ABCABC cycle.
+  let mixed = seed >>> 0;
+  mixed = Math.imul(mixed ^ (mixed >>> 16), 0x7feb352d);
+  mixed = Math.imul(mixed ^ (mixed >>> 15), 0x846ca68b);
+  mixed = (mixed ^ (mixed >>> 16)) >>> 0;
   if (mode === "weighted") {
     // 按 qualityScore 加权（无分值视为 0.5），用 seed 稳定采样
     const weights = variants.map((_, i) => {
@@ -149,7 +154,7 @@ export function pickVariant<T>(
       return typeof g.qualityScore === "number" ? Math.max(0.01, g.qualityScore) : 0.5;
     });
     const total = weights.reduce((a, b) => a + b, 0);
-    let r = ((seed >>> 0) % 10000) / 10000 * total;
+    let r = mixed / 0x100000000 * total;
     for (let i = 0; i < variants.length; i++) {
       r -= weights[i];
       if (r <= 0) return variants[i];
@@ -158,5 +163,5 @@ export function pickVariant<T>(
   }
 
   // random：seed 稳定取模
-  return variants[(seed >>> 0) % variants.length];
+  return variants[mixed % variants.length];
 }

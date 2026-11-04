@@ -80,6 +80,11 @@ function page(record: RecordValue, path: string) {
   list(record, 'textObjects', path, text, true);
   list(record, 'cleanHistory', path, (entry, p) => {
     if (entry.operation !== undefined && !['clean', 'scan'].includes(entry.operation as string)) fail(`${p}.operation`, '未知图片操作');
+    optionalObject(entry, 'scanTransform', p, (t, path) => {
+      numberField(t, 'rotation', path, -15, 15, true);
+      numberField(t, 'scale', path, 0.5, 1, true);
+    });
+    stringField(entry, 'scanColorSource', p);
     stringField(entry, 'beforeImage', p, true);
     stringField(entry, 'afterImage', p, true);
     if (!Array.isArray(entry.regions)) fail(`${p}.regions`, '应为数组');

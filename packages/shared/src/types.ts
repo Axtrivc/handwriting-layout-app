@@ -114,8 +114,13 @@ export const DEFAULT_TEXT_STYLE: TextStyle = {
   blur: 0,
 };
 
+/** 围绕原画布中心的顺时针旋转（度）与等比缩放。 */
+export interface ScanTransform { rotation: number; scale: number }
+
 /** 一次背景处理的历史记录（扫描增强或清除，用于撤销）。 */
 export interface CleanHistoryEntry {
+  scanTransform?: ScanTransform;
+  scanColorSource?: string;
   /** Missing on older files: treat as a cleanup. */
   operation?: "clean" | "scan";
   /** 处理前的背景图 dataURL */

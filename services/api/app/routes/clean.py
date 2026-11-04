@@ -1,4 +1,4 @@
-"""POST /clean-region：手动框选区域去字迹。"""
+"""POST /clean-region：选区清除、红蓝颜色清除或参考原卷对齐修复。"""
 from __future__ import annotations
 
 import sys
@@ -24,6 +24,7 @@ from vision import (  # noqa: E402  -- sys.path 注入后再导入
 )
 from vision.regions import BrushStroke
 from vision.color_cleanup import clean_colored_ink
+from vision.reference_restore import restore_from_reference
 
 router = APIRouter()
 
@@ -34,7 +35,7 @@ def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
 
     默认处理显式选区；autoColor 显式请求整页红蓝颜色清除，结果供预览。
     """
-    if not req.autoColor and not req.regions and not req.strokes:
+    if not req.referenceImage and not req.autoColor and not req.regions and not req.strokes:
         raise HTTPException(status_code=400, detail="请先框选或用画笔选择要清除的区域")
     if sum(len(stroke.points) for stroke in req.strokes) > 200_000:
         raise HTTPException(status_code=400, detail="画笔点数过多，请分次处理")
@@ -50,6 +51,15 @@ def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
     ]
     if max(img.size) > 16384 or img.width * img.height > 64_000_000:
         raise HTTPException(status_code=400, detail="图片超过当前画布尺寸上限")
+    if req.referenceImage:
+        try:
+            reference = b64_to_image(req.referenceImage)
+            if max(reference.size) > 16384 or reference.width * reference.height > 64_000_000:
+                raise ValueError('参考原卷超过当前尺寸上限')
+            result = restore_from_reference(img, reference)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return CleanRegionResponse(image=image_to_b64(result), mime='image/png', processed=1, changed=result is not img)
     if req.autoColor:
         try:
             source = b64_to_image(req.colorSource) if req.colorSource else img

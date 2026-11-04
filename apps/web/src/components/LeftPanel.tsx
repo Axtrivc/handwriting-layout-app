@@ -31,6 +31,9 @@ interface LeftPanelProps {
   hasPreview: boolean;
   previewOperation: "clean" | "scan" | null;
   undoOperation: "clean" | "scan";
+  scanDeskew: boolean;
+  onScanDeskew: (value: boolean) => void;
+  previewNote?: string;
   scanMode: ScanMode;
   scanDetail: ScanDetail;
   onScanMode: (mode: ScanMode) => void;
@@ -45,6 +48,7 @@ interface LeftPanelProps {
   onAddText: () => void;
   onAddHandwriting: () => void;
   onOpenHandwriting: () => void;
+  onReference: (file: File) => void;
   onAutoColor: () => void;
   onSelectText: (id: string) => void;
   onToggleNaturalness: (enabled: boolean) => void;
@@ -65,13 +69,13 @@ export function LeftPanel({
   selections,
   strokeCount, cleanTool, brushWidth, onCleanTool, onBrushWidth, onUndoStroke,
   cleaning,
-  processingOperation,
+  processingOperation, scanDeskew, onScanDeskew, previewNote,
   cleanError,
   canUndoClean, cleanStrength, onCleanStrength, preserveRules, onPreserveRules,
   hasPreview, compareOriginal, onCompareOriginal, onApplyClean, onCancelClean,
   previewOperation, undoOperation, scanMode, scanDetail, onScanMode, onScanDetail, onPrepareScan, onCancelProcessing,
   onUpload,
-  onAddText, onAddHandwriting, onOpenHandwriting, onAutoColor,
+  onAddText, onAddHandwriting, onOpenHandwriting, onAutoColor, onReference,
   onSelectText,
   onToggleNaturalness,
   onChangeNaturalness,
@@ -81,10 +85,12 @@ export function LeftPanel({
   onUndoClean,
 }: LeftPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const referenceRef = useRef<HTMLInputElement>(null);
   const n = project.naturalness;
   const selectionCount = selections.length + strokeCount;
   const previewLabel = previewOperation === "scan" ? "扫描" : "清除";
   const previewControls = hasPreview && <div role="status">
+    {previewNote && <p className="hint">{previewNote}</p>}
     <p className="hint">预览尚未保存。切换原图检查细节，或取消后调整设置。</p>
     <button className="btn" onClick={onCompareOriginal}>{compareOriginal ? `查看${previewLabel}效果` : "查看原图"}</button>
     <button className="btn btn--primary" onClick={onApplyClean}>应用{previewLabel}</button>
@@ -142,6 +148,9 @@ export function LeftPanel({
       </label>
       {scanMode === "bw" && scanDetail === "faint" &&
         <p className="hint">保留浅字也容易带入纸纹和背面透字。出现黑点时，改用「标准」或「去噪更强」再预览。</p>}
+      <label className="toggle"><input type="checkbox" checked={scanDeskew} disabled={cleaning || hasPreview}
+        onChange={e => onScanDeskew(e.target.checked)} />自动校正倾斜</label>
+      <p className="hint">依据文字行校正小角度倾斜，保留整页边界；不确定时保留原方向。</p>
       <button className="btn" style={{ width: "100%", marginBottom: 8 }} onClick={onPrepareScan}
         disabled={cleaning || hasPreview || !project.backgroundImage}>
         {processingOperation === "scan" ? "扫描处理中…" : "预览扫描"}
@@ -150,7 +159,12 @@ export function LeftPanel({
       </details>
       <details className="workflow-step" id="erase-step" open><summary><span>02</span>清理笔迹</summary>
       <button className="btn" disabled={cleaning || hasPreview || !project.backgroundImage} onClick={onAutoColor}>自动去红蓝笔（预览）</button>
-      <p className="hint">整页识别红蓝颜色，无需逐笔框选。也会选中同色印刷内容，请比较原图后应用；黑色笔迹仍需选区。已转黑白时会尝试使用扫描历史中的彩色原图。</p>
+      <p className="hint">整页识别红蓝颜色，无需逐笔框选。也会选中同色印刷内容，请比较原图后应用。已转黑白时会尝试使用扫描历史中的彩色原图。</p>
+      <button className="btn" style={{ display: 'block', marginTop: 8 }} disabled={cleaning || hasPreview || !project.backgroundImage}
+        onClick={() => referenceRef.current?.click()}>原卷对照修复</button>
+      <input ref={referenceRef} aria-label="上传未填写的参考原卷" type="file" accept="image/png,image/jpeg" hidden disabled={cleaning || hasPreview || !project.backgroundImage}
+        onChange={e => { const file = e.target.files?.[0]; if (file) onReference(file); e.target.value = ''; }} />
+      <p className="hint">上传同一页、同一版本的未填写原卷，自动对齐后恢复印刷内容并去除填写与批改痕迹。不确定的对齐会拒绝处理；没有原卷的黑色笔迹仍需选区。</p>
       <p className="hint">矩形用于整块区域，画笔可沿笔迹精细涂选。避开印刷内容；与笔迹重叠的原文无法保证恢复。</p>
       <label className="field">选区工具
         <select aria-label="选区工具" value={cleanTool} disabled={cleaning || hasPreview || !project.backgroundImage}
@@ -237,10 +251,10 @@ export function LeftPanel({
           checked={project.naturalnessEnabled}
           onChange={(e) => onToggleNaturalness(e.target.checked)}
         />
-        启用温和抖动
+        启用自然书写
       </label>
       <p className="hint" style={{ marginTop: 0 }}>
-        编辑时显示原始对象；导出时按固定 seed 应用，结果稳定一致。
+        预览与导出使用一致的字形变体、间距和基线变化；重复导出保持稳定。常用字建议采集自己的 3–5 个书写样本，缺字仍需补采。
       </p>
       {project.naturalnessEnabled && (
         <div className="nat-params">

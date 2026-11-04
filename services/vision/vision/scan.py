@@ -1,6 +1,7 @@
 """Document scan preparation: paper illumination removal, then gray/B&W.
 
-No OCR, deskew or text/handwriting classification. Geometry is unchanged;
+This pixel enhancement function does not change geometry or classify writing.
+The API composes it with optional deskew from vision.deskew;
 EXIF orientation has already been resolved by the shared decoder.
 """
 from typing import Literal

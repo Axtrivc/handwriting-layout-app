@@ -3,7 +3,7 @@
  *
  * 设计要点：
  * - 每个 TextObject 自带 naturalnessSeed，保证同一项目重复导出结果一致。
- * - 编辑状态下不应用抖动（由调用方决定），导出/渲染时才应用。
+ * - 编辑预览与导出均按相同设置应用，原始对象坐标保持独立。
  * - 抖动幅度刻意保持很小，仅用于让排版看起来不那么「印刷感」。
  *
  * 注意：不用于任何对抗检测的目的。
@@ -36,7 +36,7 @@ export function hashSeed(str: string): number {
 
 /** 应用自然化后的文本对象（带可能的逐行基线浮动）。 */
 export interface NaturalizedObject extends TextObject {
-  /** 逐行基线偏移 (px)，长度等于文本行数；编辑时不提供。 */
+  /** 逐行基线偏移 (px)，长度等于文本行数。 */
   lineOffsets?: number[];
 }
 

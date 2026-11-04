@@ -11,6 +11,7 @@ export type { OcrCandidateItem, OcrResultResponse } from "./ocr.js";
 
 /** POST /clean-region 请求 */
 export interface CleanRegionRequest {
+  referenceImage?: string;
   autoColor?: boolean;
   colorSource?: string;
   /** 图片 base64（不含 data: 前缀） */
@@ -39,12 +40,17 @@ export interface CleanRegionResponse {
 export type ScanMode = "bw" | "gray";
 export type ScanDetail = "faint" | "standard" | "denoise";
 export interface PrepareScanRequest {
+  deskew?: boolean;
+  colorSource?: string;
   image: string;
   mime: string;
   mode: ScanMode;
   detail: ScanDetail;
 }
 export interface PrepareScanResponse {
+  transform?: import("./types.js").ScanTransform | null;
+  colorSource?: string | null;
+  deskewConfidence?: number;
   image: string;
   mime: string;
   width: number;

@@ -1,3 +1,4 @@
+import { transformTexts } from "./lib/scanGeometry.js";
 import { WorkbookDialog } from "./components/WorkbookDialog.js";
 import { useProjectFiles } from "./lib/useProjectFiles.js";
 import { useDocument } from "./lib/useDocument.js";
@@ -129,11 +130,13 @@ export default function App() {
 
   const { selections, setSelections, cleaning, processingOperation, cleanFlash, cleanStrength, setCleanStrength,
     strokes, cleanTool, setCleanTool, brushWidth, setBrushWidth, handleStrokeEnd, handleUndoStroke, handleCancelProcessing,
-    scanMode, setScanMode, scanDetail, setScanDetail, handlePrepareScan, undoOperation,
+    scanDeskew, setScanDeskew, scanMode, setScanMode, scanDetail, setScanDetail, handlePrepareScan, undoOperation,
     preserveRules, setPreserveRules, compareOriginal, setCompareOriginal, visiblePreview,
     setCleanPreview, invalidateCleanup, handleSelectionEnd, handleSelectionUpdate,
-    handleClearSelections, handleUndoClean, handleAutoColor, handleClearRegion, handleApplyClean, canUndoClean } =
-    useCleanup({ project, activePage, generation, updatePage, showToast, setCleanError });
+    handleClearSelections, handleUndoClean, handleAutoColor, handleReference, handleClearRegion, handleApplyClean, canUndoClean } =
+    useCleanup({ project, activePage, generation, updatePage, showToast, setCleanError,
+      onGeometryChange: (page, transform, inverse) => history.mapSnapshots(page.id,
+        texts => transformTexts(texts, page, transform, inverse)) });
 
   const uploadSequence = useRef(new Map<string, number>());
   const importSequence = useRef(0);
@@ -403,22 +406,22 @@ export default function App() {
 
   // ===== 文本撤销/重做 =====
   const handleUndo = useCallback(() => {
-    if (!activePage) return;
+    if (!activePage || cleaning || visiblePreview) return;
     const prev = history.undo(activePage.id, activePage.textObjects);
     if (prev) {
       updatePage(activePage.id, (pg) => ({ ...pg, textObjects: prev, updatedAt: nowISO() }));
       showToast("已撤销");
     }
-  }, [activePage, history, updatePage, showToast]);
+  }, [activePage, cleaning, visiblePreview, history, updatePage, showToast]);
 
   const handleRedo = useCallback(() => {
-    if (!activePage) return;
+    if (!activePage || cleaning || visiblePreview) return;
     const next = history.redo(activePage.id, activePage.textObjects);
     if (next) {
       updatePage(activePage.id, (pg) => ({ ...pg, textObjects: next, updatedAt: nowISO() }));
       showToast("已重做");
     }
-  }, [activePage, history, updatePage, showToast]);
+  }, [activePage, cleaning, visiblePreview, history, updatePage, showToast]);
 
   // 快捷键 Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z
   useEffect(() => {
@@ -645,13 +648,13 @@ export default function App() {
       width: activePage?.originalWidth ?? 900,
       height: activePage?.originalHeight ?? 600,
       backgroundImage: activePage?.backgroundImage ?? null,
-      textObjects: activePage?.textObjects ?? [],
+      textObjects: activePage ? transformTexts(activePage.textObjects, activePage, visiblePreview && !compareOriginal ? visiblePreview.transform : undefined) : [],
       naturalnessEnabled: project.settings.naturalnessEnabled,
       naturalness: project.settings.naturalness,
       handwritingProfiles: project.handwritingProfiles,
       activeHandwritingProfileId: project.activeHandwritingProfileId,
     }),
-    [project, activePage],
+    [project, activePage, visiblePreview, compareOriginal],
   );
 
   return (
@@ -670,8 +673,8 @@ export default function App() {
           <button className="btn" onClick={handleLoadProject} disabled={loadingProject} title="加载项目 JSON">{loadingProject ? "加载中…" : "加载"}</button>
           <button className="btn" onClick={handleSaveProject} title="保存为本地 JSON">保存</button>
           <button className="btn workbook-entry" onClick={() => setWorkbookOpen(true)}>字帖工坊</button>
-          <button className="btn" onClick={handleUndo} disabled={!activePage || !history.canUndo(activePage.id)} title="撤销 (Ctrl+Z)">↶</button>
-          <button className="btn" onClick={handleRedo} disabled={!activePage || !history.canRedo(activePage.id)} title="重做 (Ctrl+Y)">↷</button>
+          <button className="btn" onClick={handleUndo} disabled={cleaning || !!visiblePreview || !activePage || !history.canUndo(activePage.id)} title="撤销 (Ctrl+Z)">↶</button>
+          <button className="btn" onClick={handleRedo} disabled={cleaning || !!visiblePreview || !activePage || !history.canRedo(activePage.id)} title="重做 (Ctrl+Y)">↷</button>
           <select
             className="export-scale-select"
             value={exportSettings.pngScale}
@@ -720,6 +723,9 @@ export default function App() {
         hasPreview={!!visiblePreview}
         previewOperation={visiblePreview?.operation ?? null}
         undoOperation={undoOperation}
+        scanDeskew={scanDeskew}
+        onScanDeskew={setScanDeskew}
+        previewNote={visiblePreview?.note}
         scanMode={scanMode}
         processingOperation={processingOperation}
         onScanMode={setScanMode}
@@ -739,6 +745,7 @@ export default function App() {
         onToggleNaturalness={handleToggleNaturalness}
         onChangeNaturalness={handleChangeNaturalness}
         onToggleSelectMode={handleToggleSelectMode}
+        onReference={handleReference}
         onAutoColor={handleAutoColor}
         onClearRegion={handleClearRegion}
         onClearSelections={handleClearSelections}
@@ -752,6 +759,7 @@ export default function App() {
           {activePage ? (
             <CanvasStage
               key={`${generation}:${activePage.id}:${uploadSequence.current.get(activePage.id) ?? 0}`}
+              readOnly={cleaning || !!visiblePreview}
               project={stageView}
               image={visiblePreview && !compareOriginal ? visiblePreview.image : activeImage}
               selectedId={selectedId}
@@ -809,7 +817,7 @@ export default function App() {
       </main>
 
       <StylePanel
-        selected={selected}
+        selected={cleaning || visiblePreview ? null : selected}
         onChange={handleChange}
         onDelete={handleDelete}
         onDuplicate={handleDuplicate}

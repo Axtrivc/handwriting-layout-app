@@ -54,6 +54,7 @@ export interface SelectionRect {
 }
 
 interface CanvasStageProps {
+  readOnly?: boolean;
   project: StageView;
   image: HTMLImageElement | null;
   selectedId: string | null;
@@ -90,6 +91,7 @@ interface CanvasStageProps {
  * TODO: 多选、对齐辅助线、吸附。
  */
 export function CanvasStage({
+  readOnly = false,
   project,
   image,
   selectedId,
@@ -117,7 +119,7 @@ export function CanvasStage({
   const [spaceDown, setSpaceDown] = useState(false);
   const [panTool, setPanTool] = useState(false);
   const [panning, setPanning] = useState(false);
-  const panOverride = spaceDown || panTool;
+  const panOverride = spaceDown || panTool || readOnly;
   // Outside selection mode, dragging the paper pans; text objects retain their own drag behavior.
   const canPan = panOverride || !selectMode;
   useEffect(() => { setPanTool(false); }, [selectMode, cleanTool]);
@@ -345,6 +347,7 @@ export function CanvasStage({
 
         {sortedTexts.map(obj => <TextObjectView key={obj.id} obj={obj}
           profile={project.handwritingProfiles.find(p => p.id === (obj.handwritingProfileId ?? project.activeHandwritingProfileId)) ?? null}
+          naturalness={project.naturalnessEnabled ? project.naturalness : undefined}
           images={glyphImages ?? EMPTY_IMAGES} listening={!selectMode && !panOverride}
           registerRef={node => { if (node) textRefs.current.set(obj.id, node); else textRefs.current.delete(obj.id); }}
           onSelect={() => onSelect(obj.id)} onChange={onChange}

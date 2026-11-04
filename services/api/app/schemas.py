@@ -27,6 +27,7 @@ class CleanupStroke(BaseModel):
 
 
 class CleanRegionRequest(BaseModel):
+    referenceImage: str | None = None
     autoColor: bool = False
     colorSource: str | None = None
     image: str = Field(..., description="图片 base64（不含 data: 前缀）")
@@ -45,13 +46,23 @@ class CleanRegionResponse(BaseModel):
 
 
 class PrepareScanRequest(BaseModel):
+    deskew: bool = False
+    colorSource: str | None = None
     image: str
     mime: str = "image/png"
     mode: Literal["bw", "gray"] = "bw"
     detail: Literal["faint", "standard", "denoise"] = "standard"
 
 
+class ScanTransform(BaseModel):
+    rotation: float
+    scale: float
+
+
 class PrepareScanResponse(BaseModel):
+    transform: ScanTransform | None = None
+    colorSource: str | None = None
+    deskewConfidence: float = 0
     image: str
     mime: str
     width: int

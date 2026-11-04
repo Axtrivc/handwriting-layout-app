@@ -10,6 +10,7 @@ async function verifyImages(project: CanvasProject) {
     if (page.backgroundImage) sources.set(page.backgroundImage, `页面「${page.name}」背景`);
     for (const entry of page.cleanHistory) {
       sources.set(entry.beforeImage, `页面「${page.name}」清除历史原图`);
+      if (entry.scanColorSource) sources.set(entry.scanColorSource, `页面「${page.name}」校正后的彩色原图`);
       sources.set(entry.afterImage, `页面「${page.name}」清除历史结果`);
     }
   }

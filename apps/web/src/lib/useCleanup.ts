@@ -1,21 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { nowISO, type CanvasPage, type CanvasProject, type ScanMode, type ScanDetail, type CleanupStroke } from "@hw-layout/shared";
+import { nowISO, type CanvasPage, type CanvasProject, type ScanMode, type ScanDetail, type CleanupStroke, type ScanTransform } from "@hw-layout/shared";
 import type { SelectionRect } from "../components/CanvasStage.js";
 import { clipSelection, clipStroke, type CleanupTool, type SelectionStroke } from "./cleanSelection.js";
 import { cleanRegion, prepareScan } from "./apiClient.js";
 import { describeError } from "./errors.js";
-import { loadImage, splitDataURL, joinDataURL, uid } from "./image.js";
+import { loadImage, fileToDataURL, splitDataURL, joinDataURL, uid } from "./image.js";
+
+import { transformTexts, colorSourceForPage } from "./scanGeometry.js";
 
 type Operation = "clean" | "scan";
 interface BackgroundPreview {
   pageId: string; beforeImage: string; afterImage: string;
+  transform?: ScanTransform; colorSource?: string; note?: string;
   image: HTMLImageElement; selections: SelectionRect[]; strokes: SelectionStroke[]; operation: Operation;
 }
 
 /** Scan preparation and cleanup share one preview/commit/undo transaction. */
-export function useCleanup({ project, activePage, generation, updatePage, showToast, setCleanError }: {
+export function useCleanup({ project, activePage, generation, updatePage, showToast, setCleanError, onGeometryChange }: {
   project: CanvasProject; activePage: CanvasPage | null; generation: number;
   updatePage: (id: string, update: (page: CanvasPage) => CanvasPage) => void;
+  onGeometryChange: (page: CanvasPage, transform: ScanTransform, inverse?: boolean) => void;
   showToast: (message: string) => void; setCleanError: (error: string | null) => void;
 }) {
   const [selections, setSelections] = useState<SelectionRect[]>([]);
@@ -27,6 +31,7 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
   const [cleanFlash, setCleanFlash] = useState<SelectionRect[] | null>(null);
   const [cleanStrength, setCleanStrength] = useState<"gentle" | "standard" | "strong">("standard");
   const [preserveRules, setPreserveRules] = useState(true);
+  const [scanDeskew, setScanDeskew] = useState(true);
   const [scanMode, setScanMode] = useState<ScanMode>("bw");
   const [scanDetail, setScanDetail] = useState<ScanDetail>("standard");
   const [compareOriginal, setCompareOriginal] = useState(false);
@@ -110,8 +115,9 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
       if (!isCurrent(token, activePage.id, source)) return;
       checkDimensions(image, activePage);
       updatePage(activePage.id, pg => pg.backgroundImage !== source ? pg : ({
-        ...pg, backgroundImage: last.beforeImage, cleanHistory: pg.cleanHistory.slice(0, -1), updatedAt: nowISO(),
+        ...pg, textObjects: transformTexts(pg.textObjects, pg, last.scanTransform, true), backgroundImage: last.beforeImage, cleanHistory: pg.cleanHistory.slice(0, -1), updatedAt: nowISO(),
       }));
+      if (last.scanTransform) onGeometryChange(activePage, last.scanTransform, true);
       setCleanPreview(null);
       setSelections([]);
       setStrokes([]);
@@ -124,11 +130,11 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
     }
   };
 
-  const preview = async (operation: Operation, autoColor = false) => {
+  const preview = async (operation: Operation, autoColor = false, referenceFile?: File) => {
     if (!activePage?.backgroundImage || busy.current !== null || cleanPreview) return;
     const regions = selections.map(s => clipSelection(s, activePage.originalWidth, activePage.originalHeight))
       .filter((r): r is NonNullable<typeof r> => r !== null);
-    if (operation === "clean" && !autoColor && !regions.length && !strokes.length) return;
+    if (operation === "clean" && !autoColor && !referenceFile && !regions.length && !strokes.length) return;
     const beforeImage = activePage.backgroundImage;
     const token = ++context.current;
     busy.current = token;
@@ -138,22 +144,33 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
     const controller = new AbortController();
     requestController.current = controller;
     try {
+      const reference = referenceFile ? await fileToDataURL(referenceFile) : undefined;
+      if (reference) await loadImage(reference);
+      if (!isCurrent(token, activePage.id, beforeImage)) return;
       const { data, mime } = splitDataURL(beforeImage);
-      const colorSource = autoColor ? activePage.cleanHistory.find(entry => entry.operation === "scan")?.beforeImage : undefined;
+      const colorSource = colorSourceForPage(activePage);
       const response = operation === "scan"
-        ? await prepareScan({ image: data, mime, mode: scanMode, detail: scanDetail }, controller.signal)
-        : await cleanRegion({ image: data, mime, autoColor, colorSource: colorSource ? splitDataURL(colorSource).data : undefined, regions: autoColor ? [] : regions, strokes: autoColor ? [] : strokes.map(({ points, width }) => ({ points, width })), strength: cleanStrength, preserveRules }, controller.signal);
+        ? await prepareScan({ image: data, mime, mode: scanMode, detail: scanDetail, deskew: scanDeskew, colorSource: colorSource ? splitDataURL(colorSource).data : undefined }, controller.signal)
+        : await cleanRegion({ image: data, mime, referenceImage: reference ? splitDataURL(reference).data : undefined, autoColor, colorSource: colorSource ? splitDataURL(colorSource).data : undefined, regions: autoColor || referenceFile ? [] : regions, strokes: autoColor || referenceFile ? [] : strokes.map(({ points, width }) => ({ points, width })), strength: cleanStrength, preserveRules }, controller.signal);
       if (!isCurrent(token, activePage.id, beforeImage)) return;
       const afterImage = joinDataURL(response.mime, response.image);
       const image = await loadImage(afterImage);
       if (!isCurrent(token, activePage.id, beforeImage)) return;
       checkDimensions(image, activePage);
       if ("changed" in response && response.changed === false) {
-        setCleanError(autoColor ? "未检测到红蓝笔迹。黑白图需要保留彩色原图的扫描历史；黑色手写请使用选区。" : "未检测到可清除的笔迹，请调整选区或尝试加强力度。");
+        setCleanError(referenceFile ? "当前页面与对齐后的参考原卷一致，无需修复。" : autoColor ? "未检测到红蓝笔迹。黑白图需要保留彩色原图的扫描历史；黑色手写可使用参考原卷或选区。" : "未检测到可清除的笔迹，请调整选区或尝试加强力度。");
         return;
       }
-      setCleanPreview({ pageId: activePage.id, beforeImage, afterImage, image,
-        selections: operation === "clean" && !autoColor ? selections : [], strokes: operation === "clean" && !autoColor ? strokes : [], operation });
+      const transform = "transform" in response ? response.transform ?? undefined : undefined;
+      if (transform && (!Number.isFinite(transform.rotation) || Math.abs(transform.rotation) > 15 ||
+        !Number.isFinite(transform.scale) || transform.scale < .5 || transform.scale > 1)) {
+        throw new Error('校正变换无效，已保留原图');
+      }
+      const correctedColor = referenceFile ? afterImage : "colorSource" in response && response.colorSource ? joinDataURL("image/png", response.colorSource) : undefined;
+      setCleanPreview({ transform, colorSource: correctedColor,
+        note: referenceFile ? "已按参考原卷恢复页面。请核对题目、页码和版本，确认后再应用。" : operation === "scan" && scanDeskew ? (transform ? `已校正 ${Math.abs(transform.rotation).toFixed(1)}°，完整保留页面边界；文字图层同步校正。` : '未检测到可靠倾斜，保留当前方向。') : undefined,
+        pageId: activePage.id, beforeImage, afterImage, image,
+        selections: operation === "clean" && !autoColor && !referenceFile ? selections : [], strokes: operation === "clean" && !autoColor && !referenceFile ? strokes : [], operation });
       setCompareOriginal(false);
     } catch (error) {
       if (isCurrent(token, activePage.id, beforeImage)) setCleanError(describeError(error));
@@ -168,13 +185,16 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
 
   const handleApplyClean = () => {
     if (!visiblePreview) return;
-    const { pageId, beforeImage, afterImage, selections: regions, strokes: paths, operation } = visiblePreview;
-    updatePage(pageId, pg => pg.backgroundImage !== beforeImage ? pg : ({ ...pg, backgroundImage: afterImage,
+    const { pageId, beforeImage, afterImage, selections: regions, strokes: paths, operation, transform, colorSource } = visiblePreview;
+    updatePage(pageId, pg => pg.backgroundImage !== beforeImage ? pg : ({ ...pg, textObjects: transformTexts(pg.textObjects, pg, transform), backgroundImage: afterImage,
       cleanHistory: [...pg.cleanHistory, { beforeImage, afterImage, regions, operation,
+        ...(transform ? { scanTransform: transform } : {}),
+        ...(colorSource ? { scanColorSource: colorSource } : {}),
         ...(paths.length ? { strokes: paths.map(({ points, width }) => ({ points, width })) } : {}) }].slice(-10), updatedAt: nowISO(),
     }));
     setCleanPreview(null);
     setCompareOriginal(false);
+    if (transform && activePage) onGeometryChange(activePage, transform);
     setSelections([]);
     setStrokes([]);
     if (operation === "clean") {
@@ -191,9 +211,11 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
     strokes, cleanTool, setCleanTool, brushWidth, setBrushWidth, handleStrokeEnd,
     handleUndoStroke: () => setStrokes(previous => previous.slice(0, -1)),
     handleCancelProcessing,
+    scanDeskew, setScanDeskew,
     preserveRules, setPreserveRules, scanMode, setScanMode, scanDetail, setScanDetail,
     compareOriginal, setCompareOriginal, visiblePreview, setCleanPreview, invalidateCleanup,
     handleSelectionEnd, handleSelectionUpdate, handleClearSelections, handleUndoClean,
+    handleReference: (file: File) => preview("clean", false, file),
     handleAutoColor: () => preview("clean", true),
     handleClearRegion: () => preview("clean"), handlePrepareScan: () => preview("scan"),
     handleApplyClean, canUndoClean, undoOperation };

@@ -40,6 +40,7 @@ export interface LayoutGlyph {
   fontSize: number;
   /** 不透明度（已应用 opacity jitter） */
   opacity: number;
+  rotation: number;
 }
 
 /** 单行布局结果。 */
@@ -78,7 +79,7 @@ export interface LayoutOptions {
   /** profile（handwritingGlyph 模式用），font 模式可传 null */
   profile: HandwritingProfile | null;
   /** 该对象使用的 profile id（null = 用项目活动档案，但此处应已解析为具体 profile） */
-  /** 是否应用 naturalness 抖动（导出态 true，编辑预览态 false） */
+  /** 是否应用自然书写；编辑预览与导出使用相同设置。 */
   applyJitter: boolean;
   /** naturalness 参数（applyJitter 时使用） */
   naturalness: NaturalnessParams;
@@ -122,6 +123,7 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
   }
   const rawLines: { chars: RawChar[]; baseWidth: number }[] = [];
   let absIdx = 0;
+  const previousVariants = new Map<string, { id: string; count: number }>();
   for (const line of lines) {
     const chars: RawChar[] = [];
     let baseWidth = 0;
@@ -135,11 +137,18 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
       }
       const variants = variantsByChar.get(ch) ?? [];
       const seed = obj.naturalnessSeed + absIdx;
+      const mode = opts.profile?.defaultRenderSettings.preferredVariantMode;
+      const previous = previousVariants.get(ch);
+      // With only two samples, excluding every repeat would create a mechanical ABAB cycle.
+      const avoidRepeat = variants.length > 2 || (previous?.count ?? 0) >= 2;
+      const candidates = mode !== 'first' && mode !== 'weighted' && variants.length > 1 && avoidRepeat
+        ? variants.filter(g => g.id !== previous?.id) : variants;
       const glyph =
         variants.length > 0
-          ? pickVariant(variants, seed, opts.profile?.defaultRenderSettings.preferredVariantMode)
+          ? pickVariant(candidates, seed, mode)
           : null;
       if (glyph) {
+        previousVariants.set(ch, { id: glyph.id, count: previous?.id === glyph.id ? previous.count + 1 : 1 });
         const glyphKey = `${opts.profile!.id}:${glyph.id}`;
         const img = opts.glyphSize(glyphKey);
         if (img) {
@@ -187,9 +196,11 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
     }
 
     const outGlyphs: LayoutGlyph[] = [];
+    let drift = 0;
+    let tilt = 0;
     for (const rc of chars) {
       if (rc.ch === " ") {
-        x += rc.baseWidth + opts.letterSpacing;
+        x += rc.baseWidth + opts.letterSpacing + (opts.applyJitter ? (rand()*2-1)*Math.min(rc.baseWidth*.15,opts.naturalness.positionJitter) : 0);
         continue;
       }
       // 逐字 jitter
@@ -197,6 +208,8 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
       let jitterDx = 0;
       let jitterOpacity = obj.style.opacity;
       if (opts.applyJitter) {
+        drift = .7 * drift + .3 * (rand()*2-1) * opts.naturalness.baselineJitter;
+        tilt = .65 * tilt + .35 * (rand()*2-1) * opts.naturalness.rotationJitter;
         const r = rand();
         if (opts.naturalness.fontSizeJitter > 0) {
           jitterScale *= 1 + (r * 2 - 1) * (opts.naturalness.fontSizeJitter / obj.style.fontSize);
@@ -221,26 +234,28 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
         outGlyphs.push({
           ch: rc.ch,
           x: x + jitterDx,
-          y: y + rowDy + (drawH < obj.style.fontSize ? (obj.style.fontSize - drawH) / 2 : 0),
+          y: y + rowDy + drift + (drawH < obj.style.fontSize ? (obj.style.fontSize - drawH) / 2 : 0),
           width: drawW,
           height: drawH,
           isGlyph: true,
           glyphKey: rc.glyphKey,
           fontSize: obj.style.fontSize * jitterScale,
           opacity: jitterOpacity,
+          rotation: tilt,
         });
         x += drawW + opts.letterSpacing;
       } else {
         outGlyphs.push({
           ch: rc.ch,
           x: x + jitterDx,
-          y: y + rowDy,
+          y: y + rowDy + drift,
           width: rc.baseWidth * jitterScale,
           height: obj.style.fontSize,
           isGlyph: false,
           glyphKey: null,
           fontSize: obj.style.fontSize * jitterScale,
           opacity: jitterOpacity,
+          rotation: tilt,
         });
         x += rc.baseWidth + opts.letterSpacing;
       }

@@ -29,5 +29,11 @@ export class HistoryStore<T> {
   }
   canUndo(pageId: string) { return !!this.pages.get(pageId)?.past.length; }
   canRedo(pageId: string) { return !!this.pages.get(pageId)?.future.length; }
+  mapSnapshots(pageId: string, transform: (snapshot: T) => T) {
+    const h = this.pages.get(pageId);
+    if (!h) return;
+    h.past = h.past.map(transform);
+    h.future = h.future.map(transform);
+  }
   clear() { this.pages.clear(); }
 }

@@ -28,7 +28,7 @@ export function textScene(obj: TextObject, profile: HandwritingProfile | null,
       letterSpacing: obj.style.letterSpacing, exportSeed });
     for (const line of layout.lines) for (const glyph of line.glyphs) {
       const image = glyph.glyphKey ? images.get(glyph.glyphKey) : null;
-      const position = { x: glyph.x, y: glyph.y, opacity: glyph.opacity, listening: false };
+      const position = { x: glyph.x, y: glyph.y, rotation: glyph.rotation, opacity: glyph.opacity, listening: false };
       if (image) nodes.push({ kind: 'image', attrs: { ...position, image, width: glyph.width,
         height: glyph.height, shadowBlur: obj.style.blur * 2, shadowColor: obj.style.color } });
       else nodes.push({ kind: 'text', attrs: { ...font, ...position, text: glyph.ch, fontSize: glyph.fontSize } });

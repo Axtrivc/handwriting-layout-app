@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {layoutText,pickVariant,DEFAULT_TEXT_STYLE,DEFAULT_NATURALNESS,DEFAULT_RENDER_SETTINGS} from '../packages/shared/dist/index.js';
+const glyphs=[0,1,2,3].map(i=>({id:`g${i}`,char:'字',imageBase64:'',sourceSampleSetId:'s',bbox:{x:0,y:0,width:20,height:20},variantIndex:i,createdAt:'now'}));
+const profile={id:'p',name:'sample',glyphs,sampleSets:[],defaultRenderSettings:DEFAULT_RENDER_SETTINGS,createdAt:'now',updatedAt:'now'};
+const obj={id:'t',text:'字'.repeat(60),x:0,y:0,style:DEFAULT_TEXT_STYLE,zIndex:0,naturalnessSeed:42,renderMode:'handwritingGlyph',handwritingProfileId:'p'};
+const options={profile,glyphSize:()=>({naturalWidth:20,naturalHeight:20}),applyJitter:true,naturalness:DEFAULT_NATURALNESS,letterSpacing:0};
+const result=layoutText(obj,options);assert.deepEqual(layoutText(obj,options),result);
+const chars=result.lines[0].glyphs;assert.ok(new Set(chars.map(c=>c.glyphKey)).size>=3);
+for(let i=1;i<chars.length;i++)assert.notEqual(chars[i].glyphKey,chars[i-1].glyphKey);
+assert.ok(new Set(chars.map(c=>c.y)).size>20);assert.ok(chars.every(c=>Math.abs(c.rotation)<=DEFAULT_NATURALNESS.rotationJitter));
+const picks=Array.from({length:30},(_,i)=>pickVariant([0,1,2],i));assert.ok(picks.some((v,i)=>i>=3&&v!==picks[i-3]),'no modulo ABC cycle');
+assert.equal(pickVariant(glyphs,42,'first'),glyphs[0]);
+const twoSamples=layoutText(obj,{...options,profile:{...profile,glyphs:glyphs.slice(0,2)}}).lines[0].glyphs;
+assert.ok(twoSamples.some((g,i)=>i>0&&g.glyphKey===twoSamples[i-1].glyphKey),'two variants must not alternate mechanically');
+assert.ok(twoSamples.every((g,i)=>i<2||g.glyphKey!==twoSamples[i-1].glyphKey||g.glyphKey!==twoSamples[i-2].glyphKey),'bound repeated identical samples');
+console.log('PASS: stable personal variants without periodic cycling or adjacent repetition, bounded baseline/tilt and explicit first-variant mode');
