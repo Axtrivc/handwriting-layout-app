@@ -115,6 +115,12 @@ export function CanvasStage({
   const [brushPointer, setBrushPointer] = useState<{ x: number; y: number } | null>(null);
   // 空格键按下时进入平移模式
   const [spaceDown, setSpaceDown] = useState(false);
+  const [panTool, setPanTool] = useState(false);
+  const [panning, setPanning] = useState(false);
+  const panOverride = spaceDown || panTool;
+  // Outside selection mode, dragging the paper pans; text objects retain their own drag behavior.
+  const canPan = panOverride || !selectMode;
+  useEffect(() => { setPanTool(false); }, [selectMode, cleanTool]);
   const viewport = useCanvasViewport(project.width, project.height);
 
   // 按 zIndex 升序渲染（数值大在上层）
@@ -127,20 +133,20 @@ export function CanvasStage({
   useEffect(() => {
     const tr = transformerRef.current;
     if (!tr) return;
-    if (selectMode) {
+    if (selectMode || panOverride) {
       tr.nodes([]);
       return;
     }
     const node = selectedId ? textRefs.current.get(selectedId) : null;
     tr.nodes(node ? [node] : []);
     tr.getLayer()?.batchDraw();
-  }, [selectedId, selectMode]);
+  }, [selectedId, selectMode, panOverride]);
 
   // 选区 Transformer：框选模式下跟随选中的选区（用于调整大小）
   useEffect(() => {
     const tr = selTransformerRef.current;
     if (!tr) return;
-    if (!selectMode || cleanTool !== 'rectangle') {
+    if (!selectMode || panOverride || cleanTool !== 'rectangle') {
       tr.nodes([]);
       return;
     }
@@ -149,7 +155,7 @@ export function CanvasStage({
     const node = last ? selRectRefs.current.get(last.id) : null;
     tr.nodes(node ? [node] : []);
     tr.getLayer()?.batchDraw();
-  }, [selectMode, cleanTool, selections]);
+  }, [selectMode, cleanTool, selections, panOverride]);
 
   // 全局空格键监听：按下进入平移模式
   useEffect(() => {
@@ -163,6 +169,8 @@ export function CanvasStage({
       if (e.code === "Space") setSpaceDown(false);
     };
     const onBlur = () => {
+      stageRef.current?.stopDrag();
+      setPanning(false);
       setSpaceDown(false); setDraft(null); dragStart.current = null;
       setDraftStroke(null); strokeRef.current = null; setBrushPointer(null);
     };
@@ -191,8 +199,8 @@ export function CanvasStage({
   };
 
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    // 空格平移模式：交给 stage draggable
-    if (spaceDown || e.evt.button !== 0) return;
+    // 手形工具或空格平移：交给 Stage 拖动，不开始擦除选区
+    if (panOverride || e.evt.button !== 0) return;
     // Transform handles and existing selections must not also start a new box.
     if (e.target !== stageRef.current && e.target.getClassName() !== "Image") return;
 
@@ -218,7 +226,7 @@ export function CanvasStage({
   };
 
   const handleMouseMove = () => {
-    if (!selectMode || spaceDown) return;
+    if (!selectMode || panOverride) return;
     const pos = getRelativeCanvasPos();
     if (!pos) return;
     if (cleanTool === 'brush') {
@@ -242,7 +250,7 @@ export function CanvasStage({
   };
 
   const handleMouseUp = () => {
-    if (!selectMode) return;
+    if (!selectMode || panOverride) return;
     if (strokeRef.current) {
       const stroke = strokeRef.current;
       const pos = getRelativeCanvasPos();
@@ -263,7 +271,7 @@ export function CanvasStage({
   // 滚轮缩放（以鼠标为中心）
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
-    if (dragStart.current || strokeRef.current) return;
+    if (dragStart.current || strokeRef.current || stageRef.current?.isDragging()) return;
     const stage = stageRef.current;
     if (!stage) return;
     const pointer = stage.getPointerPosition();
@@ -275,13 +283,9 @@ export function CanvasStage({
   useEffect(() => {
     setDraft(null); dragStart.current = null;
     setDraftStroke(null); strokeRef.current = null; setBrushPointer(null);
-  }, [selectMode, cleanTool, spaceDown]);
+  }, [selectMode, cleanTool, panOverride]);
 
-  const cursor = spaceDown
-    ? "grab"
-    : selectMode
-      ? "crosshair"
-      : "default";
+  const cursor = panning ? "grabbing" : canPan ? "grab" : "crosshair";
 
   return (
     <div className="canvas-editor">
@@ -293,7 +297,10 @@ export function CanvasStage({
         <output aria-label="画布缩放比例">{Math.round(viewport.view.scale * 100)}%</output>
         <button className="btn btn--xs" aria-label="放大画布" disabled={viewport.view.scale >= MAX_VIEW_SCALE}
           onClick={() => viewport.zoom(viewport.view.scale * 1.25)}>＋</button>
-        <span className="hint">{project.width} × {project.height} · 空格拖动</span>
+        <button className={`btn btn--xs ${panTool ? 'btn--primary' : ''}`} aria-pressed={panTool}
+          title="开启后按住鼠标左键拖动画布，再点一次返回编辑；也可按住空格临时拖动"
+          onClick={() => setPanTool(value => !value)}>拖动画布</button>
+        <span className="hint">{project.width} × {project.height} · {canPan ? '鼠标拖动' : '空格临时拖动'}</span>
       </div>
       <div className="canvas-viewport" ref={viewport.containerRef}
         data-view-x={viewport.view.x} data-view-y={viewport.view.y} data-view-scale={viewport.view.scale}>
@@ -304,13 +311,14 @@ export function CanvasStage({
       x={viewport.view.x} y={viewport.view.y}
       scaleX={viewport.view.scale} scaleY={viewport.view.scale}
       style={{ cursor, background: "#e9e9ef" }}
-      draggable={spaceDown}
+      draggable={canPan}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => { handleMouseUp(); setBrushPointer(null); }}
       onWheel={handleWheel}
-      onDragEnd={e => { if (e.target === stageRef.current) viewport.pan(e.target.x(), e.target.y()); }}
+      onDragStart={e => { if (e.target === stageRef.current) setPanning(true); }}
+      onDragEnd={e => { if (e.target === stageRef.current) { setPanning(false); viewport.pan(e.target.x(), e.target.y()); } }}
     >
       <Layer>
         <Rect width={project.width} height={project.height} fill="white" listening={false} />
@@ -337,7 +345,7 @@ export function CanvasStage({
 
         {sortedTexts.map(obj => <TextObjectView key={obj.id} obj={obj}
           profile={project.handwritingProfiles.find(p => p.id === (obj.handwritingProfileId ?? project.activeHandwritingProfileId)) ?? null}
-          images={glyphImages ?? EMPTY_IMAGES} listening={!selectMode}
+          images={glyphImages ?? EMPTY_IMAGES} listening={!selectMode && !panOverride}
           registerRef={node => { if (node) textRefs.current.set(obj.id, node); else textRefs.current.delete(obj.id); }}
           onSelect={() => onSelect(obj.id)} onChange={onChange}
           onEdit={() => { const text = window.prompt("编辑文本", obj.text); if (text !== null) onChange({ ...obj, text }); }}
@@ -360,8 +368,8 @@ export function CanvasStage({
               strokeWidth={2.5 / viewport.view.scale}
               dash={[8, 4]}
               fill="rgba(255,77,79,0.12)"
-              listening={selectMode && cleanTool === 'rectangle'}
-              draggable={selectMode && cleanTool === 'rectangle' && !spaceDown}
+              listening={selectMode && cleanTool === 'rectangle' && !panOverride}
+              draggable={selectMode && cleanTool === 'rectangle' && !panOverride}
               onDragEnd={(e) => {
                 const rect = { x: clamp(e.target.x(), 0, project.width - s.width),
                   y: clamp(e.target.y(), 0, project.height - s.height), width: s.width, height: s.height };
@@ -396,7 +404,7 @@ export function CanvasStage({
               : <Line key={stroke.id} points={stroke.points} stroke="#ff4d4f" strokeWidth={stroke.width}
                   opacity={0.35} lineCap="round" lineJoin="round" />
           )}
-          {selectMode && cleanTool === 'brush' && brushPointer && !spaceDown &&
+          {selectMode && cleanTool === 'brush' && brushPointer && !panOverride &&
             <Circle x={brushPointer.x} y={brushPointer.y} radius={brushWidth / 2}
               stroke="#d32f2f" strokeWidth={1.5 / viewport.view.scale} />}
         </Group>
@@ -442,7 +450,7 @@ export function CanvasStage({
           anchorStroke="#2f6df6"
           anchorFill="#fff"
         />
-        {/* 选区调整框（仅框选模式，可拖拽四角调整大小） */}
+        {/* 选区调整框（四角和四边可调整，平移模式下暂停交互） */}
         <Transformer
           ref={selTransformerRef}
           rotateEnabled={false}

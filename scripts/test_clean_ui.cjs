@@ -30,7 +30,7 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
  await page.getByLabel('框选模式',{exact:true}).uncheck();
  await page.getByRole('button',{name:'+ 添加文本框',exact:true}).click();
  if(await page.locator('.text-list li.is-active').count() !== 1) throw Error('text not added');
- await page.locator('body').click({position:{x:1300,y:800}});
+ await page.locator('.app-brand').click();
  await page.keyboard.press('Control+z');
  if(await page.locator('.text-list').innerText() !== '暂无文本，点击上方添加') throw Error('first undo failed');
  await page.keyboard.press('Control+y');

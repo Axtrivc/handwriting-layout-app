@@ -298,7 +298,7 @@ export function LeftPanel({
       </p>
       <p className="hint">
         • 滚轮：缩放画布<br />
-        • 按住 空格 + 拖拽：平移视图<br />
+        • 非选区模式直接拖动图片；选区模式可点「拖动画布」或按住空格<br />
         • 双击文本：编辑内容
       </p>
       </details>
