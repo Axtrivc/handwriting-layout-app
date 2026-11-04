@@ -31,13 +31,25 @@ def prepare_scan(img: Image.Image, mode: ScanMode = "bw", detail: ScanDetail = "
         paper = cv2.resize(paper, (w, h), interpolation=cv2.INTER_LINEAR)
     normalized = np.clip(gray.astype(np.float32) / np.maximum(paper.astype(np.float32), 1) * 255, 0, 255)
     if mode == "bw":
-        # Sauvola threshold keeps thin strokes under varying local contrast.
-        # Faint mode raises the threshold; denoise mode tolerates more paper grain.
-        k = {"faint": 0.05, "standard": 0.12, "denoise": 0.20}[detail]
-        mean = cv2.boxFilter(normalized, -1, (41, 41), borderType=cv2.BORDER_REPLICATE)
-        variance = cv2.boxFilter(normalized * normalized, -1, (41, 41), borderType=cv2.BORDER_REPLICATE) - mean * mean
+        # Illumination correction also amplifies fibers and camera noise. Smooth
+        # similar paper tones BEFORE thresholding, while preserving ink edges.
+        # Median/opening or deleting small components would erase periods and
+        # one-pixel rules. All geometry remains at the original resolution.
+        scale = max(1.0, min(3.0, min(w, h) / 1000))
+        diameter = round((5 if detail == "faint" else 7) * scale) | 1
+        color_sigma = {"faint": 8, "standard": 30, "denoise": 36}[detail]
+        spatial_sigma = (1.25 if detail == "faint" else 1.8) * scale
+        smooth = cv2.bilateralFilter(normalized.round().astype(np.uint8), diameter,
+                                     color_sigma, spatial_sigma).astype(np.float32)
+        # The previous k=.12 treated ordinary paper texture as ink. Standard
+        # now demands stronger contrast; faint remains an explicit opt-in for
+        # very light writing. Grow the neighborhood for phone-resolution pages.
+        k = {"faint": 0.05, "standard": 0.30, "denoise": 0.36}[detail]
+        window = min(121, round(41 * scale) | 1)
+        mean = cv2.boxFilter(smooth, -1, (window, window), borderType=cv2.BORDER_REPLICATE)
+        variance = cv2.boxFilter(smooth * smooth, -1, (window, window), borderType=cv2.BORDER_REPLICATE) - mean * mean
         threshold = mean * (1 + k * (np.sqrt(np.maximum(variance, 0)) / 128 - 1))
-        pixels = np.where(normalized <= threshold, 0, 255).astype(np.uint8)
+        pixels = np.where(smooth <= threshold, 0, 255).astype(np.uint8)
     else:
         pixels = normalized.round().astype(np.uint8)
     if "A" in img.getbands():

@@ -20,6 +20,7 @@
 - 所有后端图片入口先应用 EXIF 方向（含旋转、镜像），与浏览器显示尺寸及选区坐标统一，再清除该方向标记，避免再次旋转。
 - 修复的是手机照片方向标记导致的处理后旋转；没有增加 OCR 自动转正、倾斜校正或透视矫正。无方向标记但本身拍横的照片仍按其原有方向显示。
 - `/prepare-scan` 先估计纸面光照、压低阴影，再输出灰度或自适应二值黑白 PNG；不改变几何尺寸。
+- 黑白化前使用保边滤波抑制纸纹，滤波和阈值邻域随照片尺寸调整；标准模式提高背景与笔迹的对比要求，避免把纸张纤维、压缩噪声和较淡的背面透字变成黑点。保留原始像素尺寸，不用删除小连通块的方式去噪，以免误删句号、字母上的点和细线。
 - 默认黑白模式适合白纸试卷擦除。「保留浅字」更敏感，但可能带入纸面噪声；「去噪更强」可能损失浅字。灰度模式保留更多明暗层次。
 - 转黑白前后的印刷字、标点、细线必须先对比预览。该步骤不区分手写和印刷，也不恢复被笔迹遮住的原文。
 - 前端拒绝尺寸与画布不一致的处理结果，保留当前背景。更新本地代码后需重启后端；旧版本已经错误旋转的结果建议从原始照片重新处理。
@@ -44,6 +45,7 @@
 ```bash
 services/api/.venv/bin/python services/api/scripts/test_inpaint.py
 services/api/.venv/bin/python services/api/scripts/test_document_scan.py
+services/api/.venv/bin/python services/api/scripts/test_scan_texture.py
 services/api/.venv/bin/python services/api/scripts/test_brush_cleanup.py
 services/api/.venv/bin/python services/api/scripts/test_clean_api.py
 node scripts/test_editing.mjs
@@ -68,5 +70,6 @@ PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
 真实浏览器连接本地 API 验证 EXIF 照片的显示坐标、黑白/灰度预览、选区外像素一致、带文字对象的扫描/清除逐步撤销、工程保存重载，以及错误方向和延迟失败隔离。
 这里的照片均为可重复生成的测试样本，尚未用用户截图中的原始照片验收。
 新增画笔回归覆盖路径内擦除、路径外接框中的印刷内容、圆点/边缘、横竖线交叉、竖向虚线、透明度、缩放坐标、取消请求后重试及旧工程兼容。
+纸纹回归使用带已知笔迹的合成纸面，覆盖多组随机纹理、阴影、背面透字、JPEG 压缩、手机照片尺寸、独立标点、单像素彩色线条及重复扫描；分别检查背景误检比例与笔迹保留比例。浏览器回归还验证默认标准模式的背景噪点、原图对比和撤销。此项仍未取得用户截图对应的原始照片，合成样本指标不代表该照片的实测效果。
 
 另修复文本撤销栈：第一次操作现在可撤销，重做能恢复最新操作，加载工程时清除旧历史。

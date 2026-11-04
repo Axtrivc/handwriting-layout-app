@@ -129,9 +129,11 @@ export function LeftPanel({
       <label className="field">黑白细节
         <select aria-label="黑白细节" value={scanDetail} disabled={cleaning || hasPreview || !project.backgroundImage || scanMode === "gray"}
           onChange={e => onScanDetail(e.target.value as ScanDetail)}>
-          <option value="faint">保留浅字</option><option value="standard">标准</option><option value="denoise">去噪更强</option>
+          <option value="faint">保留浅字</option><option value="standard">标准（去纸纹）</option><option value="denoise">去噪更强</option>
         </select>
       </label>
+      {scanMode === "bw" && scanDetail === "faint" &&
+        <p className="hint">保留浅字也容易带入纸纹和背面透字。出现黑点时，改用「标准」或「去噪更强」再预览。</p>}
       <button className="btn" style={{ width: "100%", marginBottom: 8 }} onClick={onPrepareScan}
         disabled={cleaning || hasPreview || !project.backgroundImage}>
         {processingOperation === "scan" ? "扫描处理中…" : "预览扫描"}

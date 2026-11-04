@@ -6,6 +6,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const { canvasPoint } = require('./browser_canvas.cjs');
 const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
   'import sys; sys.path.insert(0,"services/api/scripts"); from test_document_scan import oriented_jpeg; sys.stdout.buffer.write(oriented_jpeg())']);
+const texturedFixture = execFileSync('services/api/.venv/bin/python', ['-c',
+  'import sys; sys.path.insert(0,"services/api/scripts"); from test_scan_texture import textured_page; textured_page()[0].save(sys.stdout.buffer,format="JPEG",quality=75)']);
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
@@ -144,7 +146,33 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
       const response = await page.request.post('http://127.0.0.1:8001/prepare-scan', { data: { image: fixture.toString('base64'), mime: 'image/jpeg', ...options } });
       assert.equal(response.status(), options.image ? 400 : 422);
     }
+    // The default flow must clean paper grain, not merely produce binary output.
+    await page.reload();
+    await page.locator('.upload-area input').setInputFiles({ name: 'textured-paper.jpg', mimeType: 'image/jpeg', buffer: texturedFixture });
+    await page.getByText('800×1000 · 0 字', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('黑白细节', { exact: true }).inputValue(), 'standard');
+    const texturedOriginal = await activeBackground();
+    const textureScan = await scanPreview();
+    const textureSource = `data:${textureScan.body.mime};base64,${textureScan.body.image}`;
+    const textureStats = await page.evaluate(async source => {
+      const image = new Image(); image.src = source; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+      const pixels = ctx.getImageData(80, 730, 680, 150).data;
+      let black = 0; for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 0) black++;
+      return { noise: black / (680 * 150), period: ctx.getImageData(95, 700, 1, 1).data[0],
+        rule: ctx.getImageData(400, 650, 1, 1).data[0] };
+    }, textureSource);
+    assert.ok(textureStats.noise < 0.0001, JSON.stringify(textureStats));
+    assert.equal(textureStats.period, 0); assert.equal(textureStats.rule, 0);
+    await button('查看原图').click(); await button('查看扫描效果').click();
+    assert.equal(await activeBackground(), texturedOriginal, 'comparison still retains the original photo');
+    await button('应用扫描').click();
+    await page.waitForFunction(source => document.querySelector('.page-item.is-active img')?.getAttribute('src') === source, textureSource);
+    await button('↶ 撤销扫描').click();
+    await page.waitForFunction(source => document.querySelector('.page-item.is-active img')?.getAttribute('src') === source, texturedOriginal);
     assert.deepEqual(errors, []);
     console.log('PASS: wrong-dimension result rejected, new scan allowed during old request, stale failure isolation, invalid image/options rejected');
+    console.log('PASS: default scan rejects textured JPEG paper noise, retains punctuation/rules, compares, applies and restores the original');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
