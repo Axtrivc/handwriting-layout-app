@@ -43,6 +43,9 @@ interface LeftPanelProps {
   onCancelClean: () => void;
   onUpload: (file: File) => void;
   onAddText: () => void;
+  onAddHandwriting: () => void;
+  onOpenHandwriting: () => void;
+  onAutoColor: () => void;
   onSelectText: (id: string) => void;
   onToggleNaturalness: (enabled: boolean) => void;
   onChangeNaturalness: (patch: Partial<NaturalnessParams>) => void;
@@ -68,7 +71,7 @@ export function LeftPanel({
   hasPreview, compareOriginal, onCompareOriginal, onApplyClean, onCancelClean,
   previewOperation, undoOperation, scanMode, scanDetail, onScanMode, onScanDetail, onPrepareScan, onCancelProcessing,
   onUpload,
-  onAddText,
+  onAddText, onAddHandwriting, onOpenHandwriting, onAutoColor,
   onSelectText,
   onToggleNaturalness,
   onChangeNaturalness,
@@ -91,6 +94,11 @@ export function LeftPanel({
   return (
     <aside className="app__left">
       <div className="left-content">
+      <p className="panel__title">手写文字图层</p>
+      <p className="hint">文字独立叠加在试卷上，可拖动、编辑、调整字号并随图片导出。</p>
+      <button className="btn btn--primary" disabled={cleaning || hasPreview} onClick={onAddHandwriting}>＋ 添加手写文字</button>
+      <button className="btn" onClick={onOpenHandwriting}>我的字迹 / 采样字帖</button>
+      <p className="hint">有活动字形档案时优先使用自己的字迹；无样本时使用内置英文字体。中文和个人笔迹请采集字形，缺字会提示。</p>
       <p className="panel__title">扫描稿</p>
       <div
         className="upload-area"
@@ -140,6 +148,8 @@ export function LeftPanel({
       </button>
 
       <p className="panel__title">清除字迹</p>
+      <button className="btn" disabled={cleaning || hasPreview || !project.backgroundImage} onClick={onAutoColor}>自动去红蓝笔（预览）</button>
+      <p className="hint">整页识别红蓝颜色，无需逐笔框选。也会选中同色印刷内容，请比较原图后应用；黑色笔迹仍需选区。已转黑白时会尝试使用扫描历史中的彩色原图。</p>
       <p className="hint">矩形用于整块区域，画笔可沿笔迹精细涂选。避开印刷内容；与笔迹重叠的原文无法保证恢复。</p>
       <label className="field">选区工具
         <select aria-label="选区工具" value={cleanTool} disabled={cleaning || hasPreview || !project.backgroundImage}
@@ -149,8 +159,11 @@ export function LeftPanel({
       </label>
       {cleanTool === 'brush' && <>
         <label className="field">画笔粗细：{brushWidth} 像素
-          <input aria-label="画笔粗细" type="range" min={2} max={160} step={1} value={brushWidth}
+          <input aria-label="画笔粗细" type="range" min={1} max={160} step={1} value={brushWidth}
             disabled={cleaning || hasPreview} onChange={e => onBrushWidth(Number(e.target.value))} />
+          <input aria-label="画笔像素数" type="number" min={1} max={160} step={1} value={brushWidth}
+            disabled={cleaning || hasPreview} onChange={e => { const value = e.target.valueAsNumber;
+              if (Number.isFinite(value)) onBrushWidth(Math.max(1, Math.min(160, Math.round(value)))); }} />
         </label>
         <button className="btn" disabled={!strokeCount || cleaning || hasPreview} onClick={onUndoStroke}>撤销上一笔选区</button>
         <p className="hint">红色涂层仅表示选区。先预览，确认后应用；可放大画布处理细节。</p>
@@ -183,9 +196,9 @@ export function LeftPanel({
       <button
         className="btn"
         onClick={onAddText}
-        disabled={selectMode}
+        disabled={cleaning || hasPreview}
         style={{ width: "100%", marginBottom: 12 }}
-        title={selectMode ? "请先退出框选模式" : undefined}
+        title="添加后自动退出选区模式"
       >
         + 添加文本框
       </button>

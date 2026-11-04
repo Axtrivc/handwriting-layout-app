@@ -59,6 +59,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       return [70, 110, 170].map(x => Array.from(ctx.getImageData(x, 70, 1, 1).data).slice(0, 3));
     }, png.toString('base64'));
     assert.deepEqual(colors, [[255, 0, 0], [255, 0, 0], [0, 170, 0]], 'editor and export include explicit non-active profiles, including colon IDs');
+    await page.getByRole('button', { name: '＋ 添加手写文字', exact: true }).click();
+    await page.getByLabel('文字内容').fill('甲');
+    assert.ok((await page.getByRole('button', { name: '手写素材', exact: true }).getAttribute('class')).includes('is-active'));
+    await page.waitForFunction(() => {
+      const v=document.querySelector('.canvas-viewport'), c=v.querySelector('canvas');
+      const ratio=c.width/c.clientWidth, scale=Number(v.dataset.viewScale);
+      const pixel=c.getContext('2d').getImageData((Number(v.dataset.viewX)+160*scale)*ratio,(Number(v.dataset.viewY)+110*scale)*ratio,1,1).data;
+      return pixel[0]>240 && pixel[1]<10;
+    });
     assert.deepEqual(errors, []);
     console.log('PASS: no repeated decodes for a 102-glyph library after rename/text edits, explicit profile rendering and matching PNG pixels');
   } finally { await browser.close(); }

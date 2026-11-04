@@ -124,11 +124,11 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
     }
   };
 
-  const preview = async (operation: Operation) => {
+  const preview = async (operation: Operation, autoColor = false) => {
     if (!activePage?.backgroundImage || busy.current !== null || cleanPreview) return;
     const regions = selections.map(s => clipSelection(s, activePage.originalWidth, activePage.originalHeight))
       .filter((r): r is NonNullable<typeof r> => r !== null);
-    if (operation === "clean" && !regions.length && !strokes.length) return;
+    if (operation === "clean" && !autoColor && !regions.length && !strokes.length) return;
     const beforeImage = activePage.backgroundImage;
     const token = ++context.current;
     busy.current = token;
@@ -139,20 +139,21 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
     requestController.current = controller;
     try {
       const { data, mime } = splitDataURL(beforeImage);
+      const colorSource = autoColor ? activePage.cleanHistory.find(entry => entry.operation === "scan")?.beforeImage : undefined;
       const response = operation === "scan"
         ? await prepareScan({ image: data, mime, mode: scanMode, detail: scanDetail }, controller.signal)
-        : await cleanRegion({ image: data, mime, regions, strokes: strokes.map(({ points, width }) => ({ points, width })), strength: cleanStrength, preserveRules }, controller.signal);
+        : await cleanRegion({ image: data, mime, autoColor, colorSource: colorSource ? splitDataURL(colorSource).data : undefined, regions: autoColor ? [] : regions, strokes: autoColor ? [] : strokes.map(({ points, width }) => ({ points, width })), strength: cleanStrength, preserveRules }, controller.signal);
       if (!isCurrent(token, activePage.id, beforeImage)) return;
       const afterImage = joinDataURL(response.mime, response.image);
       const image = await loadImage(afterImage);
       if (!isCurrent(token, activePage.id, beforeImage)) return;
       checkDimensions(image, activePage);
       if ("changed" in response && response.changed === false) {
-        setCleanError("未检测到可清除的笔迹，请调整选区或尝试加强力度。");
+        setCleanError(autoColor ? "未检测到红蓝笔迹。黑白图需要保留彩色原图的扫描历史；黑色手写请使用选区。" : "未检测到可清除的笔迹，请调整选区或尝试加强力度。");
         return;
       }
       setCleanPreview({ pageId: activePage.id, beforeImage, afterImage, image,
-        selections: operation === "clean" ? selections : [], strokes: operation === "clean" ? strokes : [], operation });
+        selections: operation === "clean" && !autoColor ? selections : [], strokes: operation === "clean" && !autoColor ? strokes : [], operation });
       setCompareOriginal(false);
     } catch (error) {
       if (isCurrent(token, activePage.id, beforeImage)) setCleanError(describeError(error));
@@ -193,6 +194,7 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
     preserveRules, setPreserveRules, scanMode, setScanMode, scanDetail, setScanDetail,
     compareOriginal, setCompareOriginal, visiblePreview, setCleanPreview, invalidateCleanup,
     handleSelectionEnd, handleSelectionUpdate, handleClearSelections, handleUndoClean,
+    handleAutoColor: () => preview("clean", true),
     handleClearRegion: () => preview("clean"), handlePrepareScan: () => preview("scan"),
     handleApplyClean, canUndoClean, undoOperation };
 }

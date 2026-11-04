@@ -11,6 +11,8 @@ export type { OcrCandidateItem, OcrResultResponse } from "./ocr.js";
 
 /** POST /clean-region 请求 */
 export interface CleanRegionRequest {
+  autoColor?: boolean;
+  colorSource?: string;
   /** 图片 base64（不含 data: 前缀） */
   image: string;
   /** 图片 MIME 类型，如 image/png */

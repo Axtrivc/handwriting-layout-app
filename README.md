@@ -112,6 +112,8 @@ GitHub 推送和云环境发布不会启动你电脑上的 `localhost`，本机�
 - **项目存档**：保存/加载本地 JSON（含背景 base64、宽高、文字、样式、自然化、清除历史、appVersion），加载后可继续编辑导出
 - **后端连接状态**：UI 显示 connected/disconnected/error，可配置后端地址
 
+手写文字图层、个人字帖采样和自动颜色清除的操作及技术范围见 [docs/handwriting-workflow.md](docs/handwriting-workflow.md)。
+
 ## 试卷照片的建议操作
 
 1. 上传原始照片；大图先用「适合窗口」查看整页。

@@ -13,6 +13,7 @@ interface StylePanelProps {
 
 /** 可选字体族（系统字体为主，避免引入外部字体包）。 */
 const FONT_OPTIONS: { label: string; value: string }[] = [
+  { label: "Caveat 英文手写（内置）", value: "Caveat, cursive" },
   { label: "手写风 (Cursive)", value: "cursive, 'Comic Sans MS', 'PingFang SC', sans-serif" },
   { label: "宋体 / Serif", value: "'Songti SC', 'SimSun', serif" },
   { label: "黑体 / Sans", value: "'PingFang SC', 'Microsoft YaHei', sans-serif" },
@@ -51,6 +52,7 @@ export function StylePanel({
       <p className="panel__title">文本内容</p>
       <div className="field">
         <textarea
+          aria-label="文字内容"
           value={selected.text}
           onChange={(e) => onChange({ ...selected, text: e.target.value })}
           placeholder="输入文本（支持换行）"

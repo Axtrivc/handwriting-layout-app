@@ -27,6 +27,8 @@ class CleanupStroke(BaseModel):
 
 
 class CleanRegionRequest(BaseModel):
+    autoColor: bool = False
+    colorSource: str | None = None
     image: str = Field(..., description="图片 base64（不含 data: 前缀）")
     mime: str = Field("image/png", description="图片 MIME 类型")
     regions: List[RectRegion] = Field(default_factory=list, max_length=256)

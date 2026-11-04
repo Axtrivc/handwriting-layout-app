@@ -1,3 +1,4 @@
+@font-face { font-family: Caveat; src: url("/fonts/Caveat.ttf") format("truetype"); font-weight: 400 700; font-display: swap; }
 :root {
   --bg: #f5f5f7;
   --panel: #ffffff;

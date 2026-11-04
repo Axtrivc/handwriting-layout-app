@@ -447,7 +447,8 @@ export function CanvasStage({
           ref={selTransformerRef}
           rotateEnabled={false}
           flipEnabled={false}
-          enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]}
+          keepRatio={false}
+          enabledAnchors={["top-left", "top-center", "top-right", "middle-left", "middle-right", "bottom-left", "bottom-center", "bottom-right"]}
           borderStroke="#1aa260"
           anchorStroke="#1aa260"
           anchorFill="#fff"

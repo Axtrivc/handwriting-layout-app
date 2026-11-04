@@ -130,7 +130,7 @@ export default function App() {
     scanMode, setScanMode, scanDetail, setScanDetail, handlePrepareScan, undoOperation,
     preserveRules, setPreserveRules, compareOriginal, setCompareOriginal, visiblePreview,
     setCleanPreview, invalidateCleanup, handleSelectionEnd, handleSelectionUpdate,
-    handleClearSelections, handleUndoClean, handleClearRegion, handleApplyClean, canUndoClean } =
+    handleClearSelections, handleUndoClean, handleAutoColor, handleClearRegion, handleApplyClean, canUndoClean } =
     useCleanup({ project, activePage, generation, updatePage, showToast, setCleanError });
 
   const uploadSequence = useRef(new Map<string, number>());
@@ -301,19 +301,21 @@ export default function App() {
     [activePage],
   );
 
-  const handleAddText = useCallback(() => {
-    if (!activePage || selectMode) return;
+  const handleAddText = useCallback((handwritten = false) => {
+    if (!activePage || cleaning || visiblePreview) return;
+    setSelectMode(false);
+    const profile = project.handwritingProfiles.find(p => p.id === project.activeHandwritingProfileId);
     history.push(activePage.id, activePage.textObjects);
     const newObj: TextObject = {
       id: uid(),
-      text: "双击编辑文本",
+      text: handwritten ? "Your handwriting" : "双击编辑文本",
       x: activePage.originalWidth / 2,
       y: activePage.originalHeight / 2,
-      style: { ...DEFAULT_TEXT_STYLE },
+      style: { ...DEFAULT_TEXT_STYLE, ...(handwritten ? { fontFamily: "Caveat, cursive", fontSize: Math.max(32, Math.round(activePage.originalWidth / 45)) } : {}) },
       zIndex: nextZ(),
       naturalnessSeed: randomSeed(),
-      renderMode: "font",
-      handwritingProfileId: null,
+      renderMode: handwritten && profile?.glyphs.length ? "handwritingGlyph" : "font",
+      handwritingProfileId: handwritten ? profile?.id ?? null : null,
     };
     updatePage(activePage.id, (pg) => ({
       ...pg,
@@ -321,7 +323,7 @@ export default function App() {
       updatedAt: nowISO(),
     }));
     setSelectedId(newObj.id);
-  }, [activePage, selectMode, nextZ, updatePage, history]);
+  }, [activePage, cleaning, visiblePreview, project.handwritingProfiles, project.activeHandwritingProfileId, nextZ, updatePage, history]);
 
   const handleChange = useCallback(
     (obj: TextObject) => {
@@ -723,11 +725,14 @@ export default function App() {
         onApplyClean={handleApplyClean}
         onCancelClean={() => { setCleanPreview(null); setCompareOriginal(false); }}
         onUpload={handleUpload}
-        onAddText={handleAddText}
+        onAddText={() => handleAddText()}
+        onAddHandwriting={() => handleAddText(true)}
+        onOpenHandwriting={() => { const details = document.getElementById("handwriting-profiles") as HTMLDetailsElement; details.open = true; details.scrollIntoView({ behavior: "smooth", block: "start" }); }}
         onSelectText={setSelectedId}
         onToggleNaturalness={handleToggleNaturalness}
         onChangeNaturalness={handleChangeNaturalness}
         onToggleSelectMode={handleToggleSelectMode}
+        onAutoColor={handleAutoColor}
         onClearRegion={handleClearRegion}
         onClearSelections={handleClearSelections}
         onUndoClean={handleUndoClean}
@@ -773,7 +778,7 @@ export default function App() {
             importingImages={importingImages}
           />
           <div className="hw-panel">
-            <details>
+            <details id="handwriting-profiles">
               <summary>
                 手写档案（{project.handwritingProfiles.length}）·活动：
                 {hw.activeProfile?.name ?? "无"}
