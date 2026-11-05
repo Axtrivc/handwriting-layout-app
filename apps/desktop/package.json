@@ -11,14 +11,15 @@
     "build:desktop": "pnpm run build",
     "start": "electron .",
     "start:prod": "cross-env HW_API_BASE=http://127.0.0.1:8001 electron .",
-    "package:desktop": "echo '[TODO] 安装 electron-builder 后运行: pnpm --filter @hw-layout/desktop exec electron-builder --dir' && exit 0",
-    "package:dist": "echo '[TODO] 安装 electron-builder 后运行: pnpm --filter @hw-layout/desktop exec electron-builder' && exit 0",
+    "package:desktop": "electron-builder --dir",
+    "package:dist": "electron-builder",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src"
   },
   "build": {
     "appId": "com.handwriting-layout.app",
     "productName": "Handwriting Layout",
+    "executableName": "handwriting-layout",
     "directories": {
       "output": "release"
     },
@@ -48,6 +49,7 @@
     "@types/node": "^22.10.2",
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
+    "electron-builder": "^26.0.12",
     "esbuild": "^0.24.0",
     "eslint": "^9.17.2",
     "typescript": "^5.7.2",

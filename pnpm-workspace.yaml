@@ -3,10 +3,14 @@ packages:
   - "apps/*"
 
 allowBuilds:
-  core-js: set this to true or false
+  core-js: true
+  electron: true
+  electron-winstaller: true
+  esbuild: true
 
 # 允许以下依赖执行 install 脚本
 onlyBuiltDependencies:
   - electron
+  - app-builder-bin
   - esbuild
   - core-js
