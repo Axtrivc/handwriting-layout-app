@@ -30,6 +30,10 @@ handwriting-layout-app/
 
 本项目使用 **pnpm workspace** 管理 monorepo。
 
+### Codespaces（云端 VS Code）
+
+在仓库页点 Code → Codespaces → Create codespace on main，即可在浏览器里打开云端 VS Code。环境（Node 22、pnpm 11、Python 3.11、前后端依赖）由 `.devcontainer/devcontainer.json` 在创建时自动装好。GitHub 免费账号每月 60 核小时；codespace 闲置后会自动停止，不用时也可以在 https://github.com/codespaces 手动 Stop。
+
 ### 前置要求
 
 - Node.js 22.18+ 或 24 LTS（浏览器应用最低要求 Node 20，回归脚本需要新版 Node）
