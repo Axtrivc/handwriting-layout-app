@@ -2,7 +2,8 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const { canvasPoint } = require('./browser_canvas.cjs');
-const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
+const python = process.platform === 'win32' ? 'services/api/.venv/Scripts/python.exe' : 'services/api/.venv/bin/python';
+const fixture = execFileSync(python, ['-c',
   'import sys; sys.path.insert(0,"services/api/scripts"); from test_brush_cleanup import brush_fixture; brush_fixture().save(sys.stdout.buffer,format="PNG")']);
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
@@ -13,7 +14,9 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
     async function save() {
       const pending = page.waitForEvent('download'); await button('保存').click();
       const stream = await (await pending).createReadStream(); const chunks = []; for await (const chunk of stream) chunks.push(chunk);
-      return JSON.parse(Buffer.concat(chunks).toString());
+      const text = Buffer.concat(chunks).toString();
+      const { deserializeProject } = await import('../packages/shared/dist/index.js');
+      const result = deserializeProject(text); return result.project;
     }
     async function stroke(x1, y1, x2, y2) {
       await page.mouse.move(...await canvasPoint(page, x1, y1)); await page.mouse.down();
@@ -39,7 +42,7 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
     await button('取消处理').click(); release(); await aborted;
     await page.unroute('**/clean-region');
     assert.equal(await page.locator('.app__left .err-msg').count(), 0);
-    assert.equal(await page.locator('.dirty-dot').count(), 0);
+    assert.equal(await page.locator('.dirty-dot').count(), 1, 'cancelling work does not formally save or clear dirty state');
     assert.equal(await button('预览清除 (1)').isEnabled(), true, 'cancel retains paths and allows immediate retry');
     const responsePending = page.waitForResponse(response => response.url().endsWith('/clean-region'));
     await button('预览清除 (1)').click();
@@ -49,7 +52,7 @@ const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
     const points = request.strokes[0].points;
     for (const [actual, expected] of [[points[0], 50], [points[1], 40], [points.at(-2), 180], [points.at(-1), 150]]) assert.ok(Math.abs(actual - expected) < 2);
     await button('查看原图').click(); await button('查看清除效果').click(); await button('取消预览').click();
-    assert.equal(await page.locator('.dirty-dot').count(), 0, 'drawing/preview does not edit the saved image');
+    assert.equal(await page.locator('.dirty-dot').count(), 1, 'drawing/preview does not edit or formally save the image');
     await button('预览清除 (1)').click(); await button('应用清除').click();
     const applied = await save();
     assert.equal(applied.pages[0].cleanHistory.at(-1).strokes.length, 1);

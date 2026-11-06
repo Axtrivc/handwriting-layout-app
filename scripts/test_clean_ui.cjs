@@ -3,7 +3,8 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const { execFileSync } = require('node:child_process');
 const { canvasPoint } = require('./browser_canvas.cjs');
-const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
+const python = process.platform === 'win32' ? 'services/api/.venv/Scripts/python.exe' : 'services/api/.venv/bin/python';
+const fixture = execFileSync(python, ['-c',
   'import sys; sys.path.insert(0,"services/api/scripts"); from test_inpaint import CleanupTests; CleanupTests().fixture((175,175,175),"dashed")[1].save(sys.stdout.buffer,format="PNG")']);
 (async () => {
  const browser = await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',headless:true,args:['--no-sandbox']});

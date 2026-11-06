@@ -20,6 +20,8 @@ state=documentReducer(state,edit(p=>({...p,handwritingProfiles:[...p.handwriting
 assert.equal(state.project.handwritingProfiles.length,2,'successive async mutations must merge latest content');
 assert.equal(initial.project.handwritingProfiles.length,0,'previous snapshots remain immutable');
 assert.equal(documentReducer(state,edit(p=>p)),state,'no-op preserves revision');
+const restoredDraft=documentReducer(state,{type:'replace',project:createEmptyProject(),dirty:true});
+assert.notEqual(restoredDraft.revision,restoredDraft.savedRevision,'restored drafts remain explicitly unsaved');
 console.log('PASS: document revisions, stale generations, snapshot saves, concurrent updates and navigation');
 const { appendGlyphs } = await import('../apps/web/src/lib/profileEdits.ts');
 const profile={id:'p',sampleSets:[{id:'s'}],glyphs:[{char:'字',variantIndex:3}]};

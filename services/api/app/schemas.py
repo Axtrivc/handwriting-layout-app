@@ -96,12 +96,12 @@ class SegmentGlyphRequest(BaseModel):
     image: str = Field(..., description="样本图 base64（不含 data: 前缀）")
     mime: str = Field("image/png")
     bbox: GlyphBBox
-    outMime: str | None = Field(None, description="输出 MIME，默认 image/png")
+    outMime: Literal["image/png", "image/jpeg"] | None = Field(None, description="输出 MIME，默认 image/png")
     threshold: bool = False
     thresholdValue: int = Field(180, ge=0, le=255)
     transparent: bool = False
     backgroundMode: Literal["fixed", "adaptive"] = "fixed"
-    normalizeSize: int = Field(0, ge=0, description="归一化边长，0 不归一化")
+    normalizeSize: int = Field(0, ge=0, le=2048, description="归一化边长，0 不归一化")
 
 
 class SegmentGlyphResponse(BaseModel):
@@ -170,10 +170,10 @@ class OcrGlyphRequest(BaseModel):
 class OcrSampleRequest(BaseModel):
     image: str = Field(..., description="样本图 base64")
     mime: str = Field("image/png")
-    regions: list[OcrBBox] | None = None
+    regions: list[OcrBBox] | None = Field(None, max_length=512)
 
 
 class SuggestGlyphLabelsRequest(BaseModel):
     image: str = Field(..., description="样本图 base64")
     mime: str = Field("image/png")
-    candidates: list[GlyphBBox] = Field(..., description="候选框列表")
+    candidates: list[GlyphBBox] = Field(..., max_length=512, description="候选框列表")

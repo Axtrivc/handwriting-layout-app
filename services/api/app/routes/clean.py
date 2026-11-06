@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..config import DEFAULT_INPAINT_RADIUS
 from ..schemas import CleanRegionRequest, CleanRegionResponse
+from ..workloads import run_vision
 
 # 把 services/vision 加入 sys.path 以便导入 vision 包
 # clean.py 在 services/api/app/routes/，parents[3] = services
@@ -16,6 +17,7 @@ if str(_VISION_PARENT) not in sys.path:
     sys.path.insert(0, str(_VISION_PARENT))
 
 from vision import (  # noqa: E402  -- sys.path 注入后再导入
+    ImageLimitError,
     InpaintOptions,
     RectRegion,
     b64_to_image,
@@ -30,7 +32,11 @@ router = APIRouter()
 
 
 @router.post("/clean-region", response_model=CleanRegionResponse)
-def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
+async def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
+    return await run_vision(_clean_region, req)
+
+
+def _clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
     """对用户框选或涂选的区域去字迹，可保留有外部证据的横竖线。
 
     默认处理显式选区；autoColor 显式请求整页红蓝颜色清除，结果供预览。
@@ -42,6 +48,8 @@ def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
 
     try:
         img = b64_to_image(req.image, req.mime)
+    except ImageLimitError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"图片解码失败: {exc}") from exc
 
@@ -49,14 +57,12 @@ def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
         RectRegion(x=r.x, y=r.y, width=r.width, height=r.height)
         for r in req.regions
     ]
-    if max(img.size) > 16384 or img.width * img.height > 64_000_000:
-        raise HTTPException(status_code=400, detail="图片超过当前画布尺寸上限")
     if req.referenceImage:
         try:
             reference = b64_to_image(req.referenceImage)
-            if max(reference.size) > 16384 or reference.width * reference.height > 64_000_000:
-                raise ValueError('参考原卷超过当前尺寸上限')
             result = restore_from_reference(img, reference)
+        except ImageLimitError:
+            raise
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return CleanRegionResponse(image=image_to_b64(result), mime='image/png', processed=1, changed=result is not img)
@@ -64,6 +70,8 @@ def clean_region(req: CleanRegionRequest) -> CleanRegionResponse:
         try:
             source = b64_to_image(req.colorSource) if req.colorSource else img
             result = clean_colored_ink(img, source)
+        except ImageLimitError:
+            raise
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return CleanRegionResponse(image=image_to_b64(result), mime="image/png", processed=1, changed=result is not img)

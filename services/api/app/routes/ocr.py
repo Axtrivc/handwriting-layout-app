@@ -17,6 +17,7 @@ from ..schemas import (
     OcrSampleRequest,
     SuggestGlyphLabelsRequest,
 )
+from ..workloads import run_ocr
 
 _VISION_PARENT = Path(__file__).resolve().parents[3] / "vision"
 if str(_VISION_PARENT) not in sys.path:
@@ -24,6 +25,7 @@ if str(_VISION_PARENT) not in sys.path:
 
 from vision import (  # noqa: E402
     GlyphCandidate,
+    ImageLimitError,
     OcrResult,
     RectRegion,
     b64_to_image,
@@ -78,20 +80,32 @@ def ocr_status() -> OcrResultResponse:
 
 
 @router.post("/ocr-glyph", response_model=OcrResultResponse)
-def ocr_glyph(req: OcrGlyphRequest) -> OcrResultResponse:
+async def ocr_glyph(req: OcrGlyphRequest) -> OcrResultResponse:
+    return await run_ocr(_ocr_glyph, req)
+
+
+def _ocr_glyph(req: OcrGlyphRequest) -> OcrResultResponse:
     """识别单个字形图片，返回候选字符列表。"""
     try:
         img = b64_to_image(req.image, req.mime)
+    except ImageLimitError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"图片解码失败: {exc}") from exc
     return _result_to_response(recognize_single_glyph(img))
 
 
 @router.post("/ocr-sample", response_model=OcrResultResponse)
-def ocr_sample(req: OcrSampleRequest) -> OcrResultResponse:
+async def ocr_sample(req: OcrSampleRequest) -> OcrResultResponse:
+    return await run_ocr(_ocr_sample, req)
+
+
+def _ocr_sample(req: OcrSampleRequest) -> OcrResultResponse:
     """识别整张样本图。可选 regions 对每个区域单独识别。"""
     try:
         img = b64_to_image(req.image, req.mime)
+    except ImageLimitError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"图片解码失败: {exc}") from exc
 
@@ -102,10 +116,16 @@ def ocr_sample(req: OcrSampleRequest) -> OcrResultResponse:
 
 
 @router.post("/suggest-glyph-labels", response_model=OcrResultResponse)
-def suggest_labels(req: SuggestGlyphLabelsRequest) -> OcrResultResponse:
+async def suggest_labels(req: SuggestGlyphLabelsRequest) -> OcrResultResponse:
+    return await run_ocr(_suggest_labels, req)
+
+
+def _suggest_labels(req: SuggestGlyphLabelsRequest) -> OcrResultResponse:
     """对一组候选框逐个 OCR，返回每个框的建议字符（低置信度清空）。"""
     try:
         img = b64_to_image(req.image, req.mime)
+    except ImageLimitError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"图片解码失败: {exc}") from exc
 

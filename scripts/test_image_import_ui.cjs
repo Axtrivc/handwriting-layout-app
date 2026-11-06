@@ -23,7 +23,10 @@ const { canvasPoint } = require('./browser_canvas.cjs');
     async function save() {
       const pending = page.waitForEvent('download'); await button('保存').click();
       const stream = await (await pending).createReadStream(); const chunks = []; for await (const chunk of stream) chunks.push(chunk);
-      return JSON.parse(Buffer.concat(chunks).toString());
+      const text = Buffer.concat(chunks).toString();
+      const { deserializeProject } = await import('../packages/shared/dist/index.js');
+      const result = deserializeProject(text); assert.equal(result.ok, true, result.error);
+      return result.project;
     }
     async function load(project) {
       const pending = page.waitForEvent('filechooser'); await page.getByTitle('加载项目 JSON').click();
@@ -46,7 +49,7 @@ const { canvasPoint } = require('./browser_canvas.cjs');
     await batch([file('1.png'), corrupt('2.png')]);
     await page.getByText(/本批次未添加页面/).waitFor();
     assert.equal(await page.locator('.page-item').count(), 1);
-    assert.equal(await page.locator('.dirty-dot').count(), 0);
+    assert.equal(await page.locator('.dirty-dot').count(), 1, 'browser export keeps dirty and failed batch adds no new edits');
     assert.equal((await save()).pages[0].backgroundImage, original.pages[0].backgroundImage);
     await batch([file('held-10.png', 2), file('held-2.png', 1)]); await held('held-2.png');
     assert.ok(await button('导入中…').isDisabled());

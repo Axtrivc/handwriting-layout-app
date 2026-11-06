@@ -6,7 +6,7 @@
 - inpaint: 去字迹 / inpaint 算法
 - glyph: 字形裁剪与处理
 """
-from .encoding import image_to_b64, b64_to_image  # noqa: F401
+from .encoding import ImageLimitError, image_to_b64, b64_to_image  # noqa: F401
 from .regions import RectRegion  # noqa: F401
 from .inpaint import clean_regions, InpaintOptions  # noqa: F401
 from .glyph import (  # noqa: F401
@@ -41,6 +41,7 @@ from .ocr import (  # noqa: F401
 )
 
 __all__ = [
+    "ImageLimitError",
     "image_to_b64",
     "b64_to_image",
     "RectRegion",

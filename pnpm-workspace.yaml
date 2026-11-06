@@ -2,11 +2,8 @@ packages:
   - "packages/*"
   - "apps/*"
 
+# 仅允许桌面构建所需及核心兼容依赖执行安装脚本。
 allowBuilds:
-  core-js: set this to true or false
-
-# 允许以下依赖执行 install 脚本
-onlyBuiltDependencies:
-  - electron
-  - esbuild
-  - core-js
+  core-js: true
+  electron: true
+  esbuild: true

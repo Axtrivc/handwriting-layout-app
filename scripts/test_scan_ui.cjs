@@ -4,9 +4,10 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const { canvasPoint } = require('./browser_canvas.cjs');
-const fixture = execFileSync('services/api/.venv/bin/python', ['-c',
+const python = process.platform === 'win32' ? 'services/api/.venv/Scripts/python.exe' : 'services/api/.venv/bin/python';
+const fixture = execFileSync(python, ['-c',
   'import sys; sys.path.insert(0,"services/api/scripts"); from test_document_scan import oriented_jpeg; sys.stdout.buffer.write(oriented_jpeg())']);
-const texturedFixture = execFileSync('services/api/.venv/bin/python', ['-c',
+const texturedFixture = execFileSync(python, ['-c',
   'import sys; sys.path.insert(0,"services/api/scripts"); from test_scan_texture import textured_page; textured_page()[0].save(sys.stdout.buffer,format="JPEG",quality=75)']);
 
 (async () => {
@@ -20,7 +21,9 @@ const texturedFixture = execFileSync('services/api/.venv/bin/python', ['-c',
     async function save() {
       const pending = page.waitForEvent('download'); await button('保存').click();
       const stream = await (await pending).createReadStream(); const chunks = []; for await (const chunk of stream) chunks.push(chunk);
-      return JSON.parse(Buffer.concat(chunks).toString());
+      const text = Buffer.concat(chunks).toString();
+      const { deserializeProject } = await import('../packages/shared/dist/index.js');
+      const result = deserializeProject(text); return result.project;
     }
     async function load(project) {
       const pending = page.waitForEvent('filechooser'); await page.getByTitle('加载项目 JSON').click();
@@ -76,7 +79,7 @@ const texturedFixture = execFileSync('services/api/.venv/bin/python', ['-c',
     assert.ok(rawStats.corner[0] > 180 && rawStats.corner[1] < 80, 'EXIF corner must remain at the displayed top-left');
     await button('查看原图').click(); await button('查看清除效果').click(); await button('取消预览').click();
     assert.equal(await activeBackground(), original);
-    assert.equal(await page.locator('.dirty-dot').count(), 0, 'cleanup preview/cancel does not edit the project');
+    assert.equal(await page.locator('.dirty-dot').count(), 1, 'cleanup preview/cancel does not edit or formally save the project');
     await page.getByTitle('清空已框选区域').click();
     await page.getByLabel('框选模式', { exact: true }).uncheck();
     await button('+ 添加文本框').click();
@@ -87,7 +90,7 @@ const texturedFixture = execFileSync('services/api/.venv/bin/python', ['-c',
     assert.equal(gray.request.mode, 'gray');
     assert.equal((await imageStats(`data:${gray.body.mime};base64,${gray.body.image}`)).binary, false);
     await button('查看原图').click(); await button('查看扫描效果').click(); await button('取消预览').click();
-    assert.equal(await page.locator('.dirty-dot').count(), 0, 'scan preview/cancel does not edit the project');
+    assert.equal(await page.locator('.dirty-dot').count(), 1, 'scan preview/cancel does not edit or formally save the project');
     assert.equal(await activeBackground(), original);
 
     await page.getByLabel('扫描模式', { exact: true }).selectOption('bw');

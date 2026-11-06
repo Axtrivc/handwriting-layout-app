@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { createEmptyProject, deserializeProject, serializeProject, DEFAULT_RENDER_SETTINGS, DEFAULT_TEXT_STYLE } from '../packages/shared/dist/index.js';
-import { planGlyphBatch } from '../apps/web/src/lib/glyphBatch.ts';
+import { createEmptyProject, deserializeProject, serializeProject, DEFAULT_RENDER_SETTINGS, DEFAULT_TEXT_STYLE, DEFAULT_NATURALNESS, layoutText } from '../packages/shared/dist/index.js';
+import { planGlyphBatch, normalizeGlyphChar } from '../apps/web/src/lib/glyphBatch.ts';
 
 const project = createEmptyProject();
 project.pages[0].cleanHistory = [{ beforeImage: 'before', afterImage: 'after', regions: [], operation: 'clean', strokes: [{ points: [2.5, 3.25, 20, 30], width: 8 }] }];
@@ -70,4 +70,18 @@ assert.deepEqual(sparse.map(i => i.char), ['甲', '丙']);
 assert.deepEqual(planGlyphBatch(candidates, labels, '甲 丙'), sparse, 'blank slots must not consume neighboring candidates');
 assert.deepEqual(planGlyphBatch(candidates, labels, '𠮷乙').map(i => i.char), ['𠮷', '乙']);
 assert.deepEqual(candidates.map(c => c.id), ['2', '0', '1'], 'planning must not reorder live candidates');
+assert.equal(normalizeGlyphChar(''), null);
+assert.equal(normalizeGlyphChar('   '), null);
+assert.equal(normalizeGlyphChar('甲乙'), null, 'multiple code points are rejected');
+assert.equal(normalizeGlyphChar('e\u0301'), null, 'a combining sequence is multiple code points');
+assert.equal(normalizeGlyphChar('😀'), '😀', 'a surrogate-pair emoji is one code point');
+const emoji = normalizeGlyphChar('😀');
+const emojiProfile = { ...project.handwritingProfiles[0], glyphs: [{ ...project.handwritingProfiles[0].glyphs[0], id: 'emoji', char: emoji }] };
+const emojiLayout = layoutText({ ...project.pages[0].textObjects[0], text: emoji }, {
+  glyphSize: () => ({ naturalWidth: 20, naturalHeight: 30 }), profile: emojiProfile,
+  applyJitter: false, naturalness: DEFAULT_NATURALNESS, letterSpacing: 0,
+});
+assert.equal(emojiLayout.lines[0].glyphs.length, 1);
+assert.equal(emojiLayout.lines[0].glyphs[0].isGlyph, true, 'a successfully normalized surrogate-pair glyph is hit by layoutText');
+assert.equal(emojiLayout.lines[0].glyphs[0].glyphKey, 'profile:emoji');
 console.log(`PASS: ${invalid.length + 4} invalid project cases, lossless roundtrip, legacy migration, defaults and sparse/Unicode glyph batches`);

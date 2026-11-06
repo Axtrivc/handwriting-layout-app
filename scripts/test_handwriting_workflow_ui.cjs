@@ -2,13 +2,14 @@ const assert = require('node:assert/strict');
 const {execFileSync} = require('node:child_process');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {canvasPoint} = require('./browser_canvas.cjs');
-const fixture=execFileSync('services/api/.venv/bin/python',['-c','import sys;sys.path.insert(0,"services/api/scripts");from test_color_cleanup import ColorTests;ColorTests().fixture().save(sys.stdout.buffer,format="PNG")']);
+const python = process.platform === 'win32' ? 'services/api/.venv/Scripts/python.exe' : 'services/api/.venv/bin/python';
+const fixture=execFileSync(python,['-c','import sys;sys.path.insert(0,"services/api/scripts");from test_color_cleanup import ColorTests;ColorTests().fixture().save(sys.stdout.buffer,format="PNG")']);
 (async()=>{
- const browser=await chromium.launch({executablePath:'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
  try {
  const page=await browser.newPage({viewport:{width:1500,height:1100}}); const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const button=name=>page.getByRole('button',{name,exact:true});
- async function save(){const p=page.waitForEvent('download');await button('保存').click();const stream=await(await p).createReadStream();const a=[];for await(const b of stream)a.push(b);return JSON.parse(Buffer.concat(a));}
+ async function save(){const p=page.waitForEvent('download');await button('保存').click();const stream=await(await p).createReadStream();const a=[];for await(const b of stream)a.push(b);const text=Buffer.concat(a).toString();const {deserializeProject}=await import('../packages/shared/dist/index.js');return deserializeProject(text).project;}
  async function drag(a,b){await page.mouse.move(...await canvasPoint(page,...a));await page.mouse.down();await page.mouse.move(...await canvasPoint(page,...b),{steps:10});await page.mouse.up();}
  await page.goto('http://localhost:5173');
  await page.locator('.upload-area input').setInputFiles({name:'color.png',mimeType:'image/png',buffer:fixture});

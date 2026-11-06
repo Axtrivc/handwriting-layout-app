@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const path = require('node:path');
+const sharedUrl = `/@fs/${path.resolve('packages/shared/src/index.ts').replace(/\\/g, '/').replace(/^\/+/, '')}`;
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
   try {
@@ -12,8 +14,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       Object.defineProperty(HTMLImageElement.prototype, 'src', { ...descriptor, set(value) { window.decodeCount++; descriptor.set.call(this, value); } });
     });
     await page.goto('http://localhost:5173');
-    const project = await page.evaluate(async () => {
-      const { createEmptyProject, DEFAULT_TEXT_STYLE, DEFAULT_RENDER_SETTINGS } = await import('/@fs/workspace/handwriting-layout-app/packages/shared/src/index.ts');
+    const project = await page.evaluate(async sharedUrl => {
+      const { createEmptyProject, DEFAULT_TEXT_STYLE, DEFAULT_RENDER_SETTINGS } = await import(sharedUrl);
       const image = color => {
         const canvas = document.createElement('canvas'); canvas.width = 12; canvas.height = 12;
         const ctx = canvas.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0, 0, 12, 12); return canvas.toDataURL();
@@ -30,7 +32,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       project.pages[0].textObjects = ['甲', '乙'].map((text, i) => ({ id: `t${i}`, text, x: 50 + i * 100, y: 50,
         zIndex: i, naturalnessSeed: 42, style: { ...DEFAULT_TEXT_STYLE, fontSize: 40 }, renderMode: 'handwritingGlyph', handwritingProfileId: i ? 'p:other' : null }));
       return project;
-    });
+    }, sharedUrl);
     const chooser = page.waitForEvent('filechooser'); await page.getByTitle('加载项目 JSON').click();
     await (await chooser).setFiles({ name: 'glyphs.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
     await page.getByRole('button', { name: '加载', exact: true }).waitFor();

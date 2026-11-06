@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Prepare Python build environment
+        shell: bash
+        run: |
+          python -m venv services/api/.venv
+          services/api/.venv/Scripts/python.exe -m pip install -r services/api/requirements.txt -r services/api/requirements-build.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test:unit
+      - run: pnpm test:e2e
+      - name: Verify Electron directory packaging
+        run: |
+          pnpm build:api
+          pnpm --filter @hw-layout/desktop package:desktop
+      - name: Smoke test packaged desktop and API lifecycle
+        run: node scripts/test_packaged_desktop.cjs
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r services/api/requirements.txt -r services/api/requirements-dev.txt
+      - name: Run image security and OCR contract tests
+        run: python -m pytest -p no:cacheprovider services/api/tests -q
+      - name: Run offline vision and API regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test in \
+            test_inpaint.py \
+            test_glyph.py \
+            test_detect.py \
+            test_photo_detect.py \
+            test_deskew.py \
+            test_reference_restore.py \
+            test_ocr.py; do
+            python "services/api/scripts/$test"
+          done
+          HW_OCR_MOCK=1 python services/api/scripts/test_ocr.py

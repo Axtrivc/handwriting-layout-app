@@ -2,7 +2,7 @@ const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {canvasPoint}=require('./browser_canvas.cjs');
 (async()=>{
- const browser=await chromium.launch({executablePath:'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
  try{
  const page=await browser.newPage({viewport:{width:1500,height:1100}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const button=name=>page.getByRole('button',{name,exact:true});

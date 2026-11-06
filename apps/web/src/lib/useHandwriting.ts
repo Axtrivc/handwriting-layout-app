@@ -1,5 +1,6 @@
 import { describeError } from "./errors.js";
 import { appendGlyphs } from "./profileEdits.js";
+import { normalizeGlyphChar } from "./glyphBatch.js";
 /**
  * 手写档案与字形的状态管理 Hook。
  *
@@ -173,8 +174,8 @@ export function useHandwriting({
     ): Promise<
       { ok: true; glyph: HandwritingGlyph } | { ok: false; error: string }
     > => {
-      const c = char.trim();
-      if (!c) return { ok: false, error: "请输入对应字符" };
+      const c = normalizeGlyphChar(char);
+      if (!c) return { ok: false, error: char.trim() ? "每个字形必须恰好是一个 Unicode code point" : "请输入对应字符" };
       try {
         const { data, mime } = splitDataURL(sampleDataURL);
         const resp = await segmentGlyph({
@@ -241,6 +242,10 @@ export function useHandwriting({
       backgroundMode: "fixed" | "adaptive" = "fixed",
     ): Promise<{ saved: number; skipped: number; error?: string }> => {
       if (items.length === 0) return { saved: 0, skipped: 0 };
+      const chars = items.map(item => normalizeGlyphChar(item.char));
+      if (chars.some(char => char === null)) {
+        return { saved: 0, skipped: items.length, error: "每个字形必须恰好是一个 Unicode code point，候选和标注已保留" };
+      }
       try {
         const { data, mime } = splitDataURL(sampleDataURL);
         const newGlyphs: HandwritingGlyph[] = [];
@@ -251,9 +256,8 @@ export function useHandwriting({
           variantCounter.set(g.char, (variantCounter.get(g.char) ?? 0) + 1);
         }
 
-        for (const item of items) {
-          const c = item.char.trim();
-          if (!c) continue;
+        for (const [index, item] of items.entries()) {
+          const c = chars[index]!;
           const resp = await segmentGlyph({
             image: data,
             mime,

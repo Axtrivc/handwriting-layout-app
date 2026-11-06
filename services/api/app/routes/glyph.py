@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from ..schemas import SegmentGlyphRequest, SegmentGlyphResponse
+from ..workloads import run_vision
 
 # 把 services/vision 加入 sys.path 以便导入 vision 包
 # glyph.py 在 services/api/app/routes/，parents[3] = services
@@ -16,6 +17,7 @@ if str(_VISION_PARENT) not in sys.path:
 
 from vision import (  # noqa: E402
     GlyphProcessOptions,
+    ImageLimitError,
     RectRegion,
     b64_to_image,
     image_to_b64,
@@ -26,13 +28,19 @@ router = APIRouter()
 
 
 @router.post("/segment-glyph", response_model=SegmentGlyphResponse)
-def segment_glyph(req: SegmentGlyphRequest) -> SegmentGlyphResponse:
+async def segment_glyph(req: SegmentGlyphRequest) -> SegmentGlyphResponse:
+    return await run_vision(_segment_glyph, req)
+
+
+def _segment_glyph(req: SegmentGlyphRequest) -> SegmentGlyphResponse:
     """裁剪并处理一个字形。
 
     合规约束：仅处理请求中提供的样本图，不存储、不上传，不涉及他人笔迹。
     """
     try:
         img = b64_to_image(req.image, req.mime)
+    except ImageLimitError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"图片解码失败: {exc}") from exc
 

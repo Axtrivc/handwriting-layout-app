@@ -104,18 +104,15 @@ export function useProjectExport(project: CanvasProject, activePage: CanvasPage 
     const miss = checkMissingBeforeExport();
     if (miss && !window.confirm(`${miss}\n\n是否继续导出？`)) return;
     try {
-      const inputs: { dataURL: string; width: number; height: number }[] = [];
-      for (let i = 0; i < project.pages.length; i++) {
-        setExportProgress(`正在生成 PDF ${i + 1}/${project.pages.length}`);
-        const page = project.pages[i];
-        const dataURL = await renderPage(page, exportSettings.pngScale);
-        inputs.push({
-          dataURL,
-          width: page.originalWidth,
-          height: page.originalHeight,
-        });
-      }
-      await exportPagesToPDF(inputs, exportSettings.pdfCompression);
+      const inputs = async function* () {
+        for (let i = 0; i < project.pages.length; i++) {
+          setExportProgress(`正在生成 PDF ${i + 1}/${project.pages.length}`);
+          const page = project.pages[i];
+          const dataURL = await renderPage(page, exportSettings.pngScale);
+          yield { dataURL, width: page.originalWidth, height: page.originalHeight };
+        }
+      };
+      await exportPagesToPDF(inputs(), exportSettings.pdfCompression);
       showToast(`已导出 ${project.pages.length} 页 PDF`);
     } catch (err) {
       setCleanError(`PDF 导出失败：${err instanceof Error ? err.message : String(err)}`);

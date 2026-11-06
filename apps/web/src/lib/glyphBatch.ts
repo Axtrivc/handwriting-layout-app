@@ -1,5 +1,11 @@
 import type { GlyphBoundingBox } from '@hw-layout/shared';
 
+/** Match layoutText's for...of iteration: one glyph is exactly one Unicode code point. */
+export function normalizeGlyphChar(value: string): string | null {
+  const char = value.trim();
+  return Array.from(char).length === 1 ? char : null;
+}
+
 /** Keep candidate identity with every submitted item; empty labels are not consumed. */
 export function planGlyphBatch<T extends GlyphBoundingBox & { id: string; rowIndex: number; orderIndex: number }>(
   candidates: T[], labels: Map<string, { char: string }>, batchText: string,

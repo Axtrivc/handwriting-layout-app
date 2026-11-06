@@ -5,7 +5,7 @@
  */
 import type { CanvasPage, HandwritingProfile, NaturalnessParams } from "@hw-layout/shared";
 import { downloadURL, exportFilename } from "./image.js";
-import { renderPageToDataURL, preloadPageGlyphs, type GlyphImageStore } from "./offscreenRender.js";
+import { renderPageOffscreen, preloadPageGlyphs, type GlyphImageStore } from "./offscreenRender.js";
 
 export interface ZipExportOptions {
   profiles: HandwritingProfile[];
@@ -46,7 +46,7 @@ export async function exportPagesToZip(
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
     opts.onProgress?.(i + 1, pages.length);
-    const dataURL = await renderPageToDataURL(page, {
+    const canvas = await renderPageOffscreen(page, {
       profiles: opts.profiles,
       activeProfileId: opts.activeProfileId,
       naturalness: opts.naturalness,
@@ -55,9 +55,13 @@ export async function exportPagesToZip(
       scale: opts.scale,
       glyphStore,
     });
-    const base64 = dataURL.replace(/^data:image\/png;base64,/, "");
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(value => value ? resolve(value) : reject(new Error("PNG 编码失败")), "image/png");
+    });
     const pageStr = String(i + 1).padStart(3, "0");
-    zip.file(`${baseName}-page-${pageStr}.png`, base64, { base64: true });
+    zip.file(`${baseName}-page-${pageStr}.png`, blob);
+    canvas.width = 1;
+    canvas.height = 1;
   }
 
   const blob = await zip.generateAsync({ type: "blob" });

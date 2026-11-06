@@ -104,11 +104,15 @@ async function main() {
   // [7] 桌面 build 入口存在
   console.log("\n[7] 桌面 build 入口");
   assert(existsSync("apps/desktop/dist/main.cjs"), "dist/main.cjs 存在");
+  assert(existsSync("apps/desktop/dist/preload.cjs"), "dist/preload.cjs 存在");
   assert(existsSync("apps/desktop/package.json"), "desktop package.json 存在");
   const desktopPkg = JSON.parse(readFileSync("apps/desktop/package.json", "utf-8"));
   assert(desktopPkg.main === "dist/main.cjs", `main 指向 dist/main.cjs（实际 ${desktopPkg.main}）`);
   assert(desktopPkg.scripts["build:desktop"] !== undefined, "有 build:desktop 脚本");
-  assert(desktopPkg.scripts["package:desktop"] !== undefined, "有 package:desktop 脚本");
+  assert(desktopPkg.scripts["package:desktop"] === "electron-builder --dir", "目录打包使用真实 electron-builder 命令");
+  assert(desktopPkg.scripts["package:dist"] === "electron-builder", "安装包使用真实 electron-builder 命令");
+  assert(desktopPkg.devDependencies["electron-builder"] !== undefined, "electron-builder 已声明为开发依赖");
+  assert(JSON.stringify(desktopPkg.build.extraResources).includes("backend/hw-api"), "打包资源包含独立后端");
 
   // [8] 懒加载仍有效
   console.log("\n[8] 导出懒加载");

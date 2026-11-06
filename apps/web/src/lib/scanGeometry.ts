@@ -15,7 +15,27 @@ export function transformTexts(objects: TextObject[], page: Pick<CanvasPage, 'or
   }));
 }
 
+function colorSourceFromHistory(history: CanvasPage['cleanHistory']): string | null {
+  return [...history].reverse().find(entry => entry.scanColorSource)?.scanColorSource
+    ?? history.find(entry => entry.operation === 'scan')?.beforeImage
+    ?? null;
+}
+
 export function colorSourceForPage(page: CanvasPage): string | undefined {
-  return [...page.cleanHistory].reverse().find(entry => entry.scanColorSource)?.scanColorSource
-    ?? page.cleanHistory.find(entry => entry.operation === 'scan')?.beforeImage;
+  if (page.colorSource !== undefined) return page.colorSource ?? undefined;
+  return colorSourceFromHistory(page.cleanHistory) ?? undefined;
+}
+
+/** Store the current color source independently of the bounded visual undo stack. */
+export function colorSourceAfterOperation(page: CanvasPage, operation: 'clean' | 'scan',
+  beforeImage: string, correctedColor?: string): string | null {
+  const current = colorSourceForPage(page) ?? null;
+  return correctedColor ?? (operation === 'scan' ? current ?? beforeImage : current);
+}
+
+/** New entries restore their exact prior value; old entries derive it from remaining history. */
+export function colorSourceAfterUndo(page: CanvasPage): string | null {
+  const last = page.cleanHistory.at(-1);
+  if (last?.beforeColorSource !== undefined) return last.beforeColorSource;
+  return colorSourceFromHistory(page.cleanHistory.slice(0, -1));
 }
