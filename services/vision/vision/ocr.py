@@ -3,14 +3,14 @@
 设计原则：
 - OCR 依赖必须可选。未安装时接口返回 status=unavailable，不崩。
 - 只做「辅助建议」，不替用户确认；用户必须检查、修改、确认后再保存。
-- provider 可插拔：RapidOCR / onnxruntime / mock，统一接口。
+- provider 可插拔：RapidOCR / mock，统一接口。
 
 合规说明：仅用于辅助用户标注**自己**的手写样本，不涉及他人笔迹识别。
 """
 from __future__ import annotations
 
-import io
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -21,6 +21,11 @@ from .glyph_detect import GlyphCandidate
 from .regions import RectRegion
 
 logger = logging.getLogger(__name__)
+
+# RapidOCR 模型在每进程内懒加载一次；初始化与推理都不能并发进入同一引擎。
+_rapidocr_factory = None
+_rapidocr_engine = None
+_rapidocr_lock = threading.Lock()
 
 
 # ===== 数据结构 =====
@@ -49,6 +54,7 @@ class OcrResult:
 
 # provider 名称 -> 识别函数
 # 函数签名：(image: PIL.Image, crop_hint: Optional[RectRegion]) -> list[OcrCandidate]
+# crop_hint 是调用方请求的原图区域；provider 的 bbox 契约沿用原图坐标。
 _PROVIDERS: dict[str, callable] = {}
 
 
@@ -58,52 +64,60 @@ def register_provider(name: str, fn: callable) -> None:
     logger.info("OCR provider registered: %s", name)
 
 
+def _get_rapidocr_engine():
+    """返回进程级 RapidOCR 引擎，首次调用时才加载模型。"""
+    global _rapidocr_engine
+    if _rapidocr_engine is None:
+        with _rapidocr_lock:
+            if _rapidocr_engine is None:
+                if _rapidocr_factory is None:
+                    raise RuntimeError("RapidOCR provider 未初始化")
+                _rapidocr_engine = _rapidocr_factory()
+    return _rapidocr_engine
+
+
+def _rapidocr_recognize(
+    image: Image.Image, crop_hint: Optional[RectRegion] = None
+) -> list[OcrCandidate]:
+    img_arr = _pil_to_array(image)
+    engine = _get_rapidocr_engine()
+    with _rapidocr_lock:
+        result, _elapsed = engine(img_arr)
+    cands: list[OcrCandidate] = []
+    if result:
+        for box, text, score in result:
+            if not text:
+                continue
+            bbox = _box_to_dict(box)
+            if crop_hint and bbox:
+                # crop_glyph 会将左/上负偏移 clipping 到 0，其余偏移保持原值。
+                bbox["x"] += max(0, crop_hint.x)
+                bbox["y"] += max(0, crop_hint.y)
+            cands.append(
+                OcrCandidate(
+                    text=text,
+                    confidence=float(score),
+                    bbox=bbox,
+                    provider="rapidocr",
+                )
+            )
+    return cands
+
+
 def _try_import_rapidocr() -> None:
-    """尝试导入 RapidOCR 作为 provider（可选）。"""
+    """尝试导入 RapidOCR 作为 provider（可选），模型保持懒加载。"""
+    global _rapidocr_factory
     try:
         from rapidocr_onnxruntime import RapidOCR  # type: ignore
-
-        def _rapidocr_recognize(
-            image: Image.Image, crop_hint: Optional[RectRegion] = None
-        ) -> list[OcrCandidate]:
-            img_arr = _pil_to_array(image)
-            engine = RapidOCR()
-            result, _elapsed = engine(img_arr)
-            cands: list[OcrCandidate] = []
-            if result:
-                for box, text, score in result:
-                    if not text:
-                        continue
-                    cands.append(
-                        OcrCandidate(
-                            text=text,
-                            confidence=float(score),
-                            bbox=_box_to_dict(box),
-                            provider="rapidocr",
-                        )
-                    )
-            return cands
-
-        register_provider("rapidocr", _rapidocr_recognize)
     except ImportError:
         logger.info("RapidOCR 未安装，OCR 将返回 unavailable")
+        return
+    _rapidocr_factory = RapidOCR
+    register_provider("rapidocr", _rapidocr_recognize)
 
 
 def _try_import_easyocr() -> None:
-    """尝试导入 EasyOCR 作为 provider（可选，较重）。"""
-    try:
-        import easyocr  # type: ignore  # noqa: F401
-
-        # EasyOCR 较重，这里只做注册占位，实际识别逻辑按需实现
-        def _easyocr_recognize(
-            image: Image.Image, crop_hint: Optional[RectRegion] = None
-        ) -> list[OcrCandidate]:
-            # TODO: 完整 EasyOCR 调用（需要指定 languages）
-            return []
-
-        register_provider("easyocr", _easyocr_recognize)
-    except ImportError:
-        pass
+    """EasyOCR 尚无真实识别实现，即使已安装也不注册空占位 provider。"""
 
 
 def register_mock_provider() -> None:
@@ -136,7 +150,7 @@ def register_mock_provider() -> None:
     register_provider("mock", _mock_recognize)
 
 
-# 初始化时尝试注册可用 provider（顺序：rapidocr > easyocr > mock）
+# 初始化时注册 provider；RapidOCR 模型仍在首次识别时加载，EasyOCR 占位不注册。
 _try_import_rapidocr()
 _try_import_easyocr()
 register_mock_provider()

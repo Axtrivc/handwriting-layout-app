@@ -11,6 +11,7 @@ from ..schemas import (
     DetectGlyphCandidatesResponse,
     GlyphCandidateItem,
 )
+from ..workloads import run_vision
 
 # 把 services/vision 加入 sys.path
 _VISION_PARENT = Path(__file__).resolve().parents[3] / "vision"
@@ -19,6 +20,7 @@ if str(_VISION_PARENT) not in sys.path:
 
 from vision import (  # noqa: E402
     DetectParams,
+    ImageLimitError,
     b64_to_image,
     detect_and_sort,
 )
@@ -27,7 +29,13 @@ router = APIRouter()
 
 
 @router.post("/detect-glyph-candidates", response_model=DetectGlyphCandidatesResponse)
-def detect_glyph_candidates(
+async def detect_glyph_candidates(
+    req: DetectGlyphCandidatesRequest,
+) -> DetectGlyphCandidatesResponse:
+    return await run_vision(_detect_glyph_candidates, req)
+
+
+def _detect_glyph_candidates(
     req: DetectGlyphCandidatesRequest,
 ) -> DetectGlyphCandidatesResponse:
     """检测样本图中的字形候选区域，返回带阅读顺序的 bbox 列表。
@@ -36,6 +44,8 @@ def detect_glyph_candidates(
     """
     try:
         img = b64_to_image(req.image, req.mime)
+    except ImageLimitError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"图片解码失败: {exc}") from exc
 

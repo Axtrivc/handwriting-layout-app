@@ -1,4 +1,4 @@
-import { transformTexts } from "./lib/scanGeometry.js";
+import { colorSourceForPage, transformTexts } from "./lib/scanGeometry.js";
 import { WorkbookDialog } from "./components/WorkbookDialog.js";
 import { useProjectFiles } from "./lib/useProjectFiles.js";
 import { useDocument } from "./lib/useDocument.js";
@@ -8,8 +8,11 @@ import { describeError } from "./lib/errors.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_TEXT_STYLE,
+  collectGlyphKeys,
   createBlankPage,
+  layoutText,
   nowISO,
+  textPageRanges,
   type CanvasPage,
   type GlyphBoundingBox,
   type GlyphCandidate,
@@ -97,6 +100,22 @@ export default function App() {
     () => activePage?.textObjects.find((t) => t.id === selectedId) ?? null,
     [activePage, selectedId],
   );
+  const selectedProfile = useMemo(() => {
+    if (!selected || selected.renderMode !== "handwritingGlyph") return null;
+    return project.handwritingProfiles.find(p => p.id === (selected.handwritingProfileId ?? project.activeHandwritingProfileId)) ?? null;
+  }, [selected, project.handwritingProfiles, project.activeHandwritingProfileId]);
+  const selectedLayout = useMemo(() => selected ? layoutText(selected, {
+    profile: selectedProfile,
+    glyphSize: key => glyphImages.get(key) ?? null,
+    applyJitter: false,
+    naturalness: project.settings.naturalness,
+    letterSpacing: selected.style.letterSpacing,
+  }) : null, [selected, selectedProfile, glyphImages, project.settings.naturalness]);
+  const selectedLayoutReady = useMemo(() => {
+    if (!selected) return false;
+    if (selected.renderMode !== "handwritingGlyph") return true;
+    return collectGlyphKeys(selected, selectedProfile).every(key => glyphImages.has(key));
+  }, [selected, selectedProfile, glyphImages]);
 
   // ===== 文本撤销栈（每页独立） =====
   const history = useHistory();
@@ -159,12 +178,11 @@ export default function App() {
         uploadSequence.current.get(activePage.id) === sequence &&
         latestDocument.current.project.pages.some(page => page.id === activePage.id);
       const visible = () => current() && latestDocument.current.project.activePageId === activePage.id;
-      invalidateCleanup();
       try {
         const dataURL = await fileToDataURL(file);
         const img = await loadImage(dataURL);
         if (!current()) return;
-        updatePage(activePage.id, (pg) => ({ ...pg, backgroundImage: dataURL,
+        updatePage(activePage.id, (pg) => ({ ...pg, backgroundImage: dataURL, colorSource: null,
           originalWidth: img.naturalWidth, originalHeight: img.naturalHeight, cleanHistory: [] }));
         if (visible()) {
           invalidateCleanup();
@@ -253,7 +271,8 @@ export default function App() {
           ...src,
           id: uid("page"),
           name: `${src.name} 副本`,
-          textObjects: src.textObjects.map((t) => ({ ...t, id: uid("obj"), naturalnessSeed: randomSeed() })),
+          textObjects: src.textObjects.map((t) => ({ ...t, id: uid("obj") })),
+          colorSource: colorSourceForPage(src) ?? null,
           cleanHistory: [],
           createdAt: nowISO(),
           updatedAt: nowISO(),
@@ -370,7 +389,6 @@ export default function App() {
         y: src.y + 16,
         style: { ...src.style },
         zIndex: nextZ(),
-        naturalnessSeed: randomSeed(),
       };
       updatePage(activePage.id, (pg) => ({
         ...pg,
@@ -381,6 +399,36 @@ export default function App() {
     },
     [activePage, nextZ, updatePage, history],
   );
+
+  const handlePaginate = useCallback((id: string) => {
+    if (!activePage || !selected || selected.id !== id || !selectedLayout) return;
+    if (!selectedLayoutReady) { showToast("字形图片仍在加载，完成后才能分页"); return; }
+    if (!selected.maxLines) { showToast("请先设置最大行数"); return; }
+    const ranges = textPageRanges(selectedLayout, selected.maxLines);
+    if (ranges.length <= 1) { showToast("当前内容无需分页"); return; }
+    history.push(activePage.id, activePage.textObjects);
+    const source = selected;
+    const firstText = source.text.slice(ranges[0].startOffset, ranges[0].endOffset);
+    const inserted = ranges.slice(1).map((range, index) => {
+      const naturalnessOffset = (source.naturalnessOffset ?? 0) + Array.from(source.text.slice(0, range.startOffset)).length;
+      return {
+        ...createBlankPage(0, `${activePage.name} · 分页 ${index + 2}`),
+        backgroundImage: activePage.backgroundImage,
+        colorSource: colorSourceForPage(activePage) ?? null,
+        originalWidth: activePage.originalWidth,
+        originalHeight: activePage.originalHeight,
+        textObjects: [{ ...source, id: uid("obj"), text: source.text.slice(range.startOffset, range.endOffset),
+          style: { ...source.style }, naturalnessOffset }],
+      };
+    });
+    touchProject(project => {
+      const pages = project.pages.flatMap(page => page.id === activePage.id
+        ? [{ ...page, textObjects: page.textObjects.map(obj => obj.id === id ? { ...obj, text: firstText } : obj), updatedAt: nowISO() }, ...inserted]
+        : [page]);
+      return { ...project, pages: pages.map((page, index) => ({ ...page, index })) };
+    });
+    showToast(`已按行数分为 ${ranges.length} 页，原文与自然化设置均已保留`);
+  }, [activePage, selected, selectedLayout, selectedLayoutReady, history, touchProject, showToast]);
 
   const handleBringToFront = useCallback(
     (id: string) => {
@@ -666,15 +714,15 @@ export default function App() {
           <input aria-label="作品名称" value={project.name === '未命名项目' ? '我的手写作品' : project.name}
             onChange={e => touchProject(p => ({ ...p, name: e.target.value }))}
             onBlur={() => { if (!project.name.trim()) touchProject(p => ({ ...p, name: '我的手写作品' })); }} />
-          {dirty && <span className="dirty-dot" title="有未保存的修改">●</span>}
+          {dirty && <span className="dirty-dot" title="有未保存的修改" role="status" aria-label="有未保存的修改">●</span>}
         </div>
         <ConnectionBadge status={status} apiBase={apiBase} onReconnect={reconnect} onApiBaseChange={updateApiBase} />
         <div className="header-tools" style={{ marginLeft: 8 }}>
           <button className="btn" onClick={handleLoadProject} disabled={loadingProject} title="加载项目 JSON">{loadingProject ? "加载中…" : "加载"}</button>
           <button className="btn" onClick={handleSaveProject} title="保存为本地 JSON">保存</button>
           <button className="btn workbook-entry" onClick={() => setWorkbookOpen(true)}>字帖工坊</button>
-          <button className="btn" onClick={handleUndo} disabled={cleaning || !!visiblePreview || !activePage || !history.canUndo(activePage.id)} title="撤销 (Ctrl+Z)">↶</button>
-          <button className="btn" onClick={handleRedo} disabled={cleaning || !!visiblePreview || !activePage || !history.canRedo(activePage.id)} title="重做 (Ctrl+Y)">↷</button>
+          <button className="btn" onClick={handleUndo} disabled={cleaning || !!visiblePreview || !activePage || !history.canUndo(activePage.id)} title="撤销 (Ctrl+Z)" aria-label="撤销 (Ctrl+Z)">↶</button>
+          <button className="btn" onClick={handleRedo} disabled={cleaning || !!visiblePreview || !activePage || !history.canRedo(activePage.id)} title="重做 (Ctrl+Y)" aria-label="重做 (Ctrl+Y)">↷</button>
           <select
             className="export-scale-select"
             value={exportSettings.pngScale}
@@ -823,11 +871,14 @@ export default function App() {
         onDuplicate={handleDuplicate}
         onBringToFront={handleBringToFront}
         onSendToBack={handleSendToBack}
+        onPaginate={handlePaginate}
+        layout={selectedLayout}
+        layoutReady={selectedLayoutReady}
         profiles={project.handwritingProfiles}
         activeProfileId={project.activeHandwritingProfileId}
       />
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
 
       {segmenterTarget && segmenterProfile && segmenterSampleSet && (
         <GlyphSegmenter

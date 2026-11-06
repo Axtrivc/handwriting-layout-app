@@ -25,6 +25,7 @@ import {
 /** 项目 JSON 的最小可识别结构（用于校验输入）。 */
 interface ProjectFileShape {
   appVersion?: unknown;
+  assets?: unknown;
   id?: unknown;
   name?: unknown;
   pages?: unknown;
@@ -36,6 +37,7 @@ interface ProjectFileShape {
   updatedAt?: unknown;
   // 旧单页字段
   backgroundImage?: unknown;
+  colorSource?: unknown;
   width?: unknown;
   height?: unknown;
   textObjects?: unknown;
@@ -95,7 +97,71 @@ export function createEmptyProject(): CanvasProject {
   };
 }
 
-/** 把项目序列化为 JSON 字符串（剥离 deprecated 字段，仅存多页结构）。 */
+const IMAGE_FIELDS = new Set([
+  "backgroundImage", "colorSource", "beforeColorSource", "scanColorSource",
+  "beforeImage", "afterImage", "imageBase64",
+]);
+const ASSET_PREFIX = "hw-asset:";
+
+function visitImageFields(value: unknown, visit: (image: string) => string): void {
+  if (Array.isArray(value)) {
+    for (const item of value) visitImageFields(item, visit);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (IMAGE_FIELDS.has(key) && typeof child === "string") {
+      (value as Record<string, unknown>)[key] = visit(child);
+    } else {
+      visitImageFields(child, visit);
+    }
+  }
+}
+
+function cloneJson<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(item => cloneJson(item)) as T;
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneJson(child)])) as T;
+  }
+  return value;
+}
+
+function packProjectAssets(project: CanvasProject): CanvasProject & { assets?: string[] } {
+  const packed = cloneJson(project) as CanvasProject & { assets?: string[] };
+  const assets: string[] = [];
+  const indices = new Map<string, number>();
+  visitImageFields(packed, image => {
+    if (!image.startsWith("data:") || image.length < 256) return image;
+    let index = indices.get(image);
+    if (index === undefined) {
+      index = assets.length;
+      indices.set(image, index);
+      assets.push(image);
+    }
+    return `${ASSET_PREFIX}${index}`;
+  });
+  if (assets.length > 0) packed.assets = assets;
+  return packed;
+}
+
+function resolveProjectAssets(data: ProjectFileShape): ProjectFileShape {
+  if (data.assets === undefined) return data;
+  if (!Array.isArray(data.assets) || data.assets.some(asset => typeof asset !== "string")) {
+    throw new Error("assets：应为图片资源字符串数组");
+  }
+  const { assets, ...root } = data;
+  visitImageFields(root, image => {
+    if (!image.startsWith(ASSET_PREFIX)) return image;
+    const index = Number(image.slice(ASSET_PREFIX.length));
+    if (!Number.isInteger(index) || index < 0 || index >= assets.length) {
+      throw new Error(`图片资源引用无效：${image}`);
+    }
+    return assets[index];
+  });
+  return root;
+}
+
+/** 把项目序列化为 JSON 字符串；重复图片只保存一次，加载时透明还原。 */
 export function serializeProject(project: CanvasProject): string {
   const clean: CanvasProject = {
     appVersion: APP_VERSION,
@@ -109,7 +175,7 @@ export function serializeProject(project: CanvasProject): string {
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
   };
-  return JSON.stringify(clean, null, 2);
+  return JSON.stringify(packProjectAssets(clean), null, 2);
 }
 
 /** 从 JSON 字符串解析并校验项目，返回规范化后的 CanvasProject。 */
@@ -125,6 +191,7 @@ export function deserializeProject(raw: string): LoadResult {
   }
 
   try {
+    data = resolveProjectAssets(data);
     validateProjectFile(data);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "项目校验失败" };
@@ -195,6 +262,9 @@ function normalizePage(p: Record<string, unknown>, idx: number): CanvasPage {
     name: typeof p.name === "string" ? p.name : `第 ${idx + 1} 页`,
     index: idx,
     backgroundImage: hasBg ? (p.backgroundImage as string) : null,
+    ...(typeof p.colorSource === "string" || p.colorSource === null
+      ? { colorSource: p.colorSource }
+      : {}),
     originalWidth:
       typeof p.originalWidth === "number"
         ? p.originalWidth
@@ -225,6 +295,9 @@ function migrateLegacyPage(data: ProjectFileShape, idx: number): CanvasPage {
     index: idx,
     backgroundImage:
       typeof data.backgroundImage === "string" ? data.backgroundImage : null,
+    ...(typeof data.colorSource === "string" || data.colorSource === null
+      ? { colorSource: data.colorSource }
+      : {}),
     originalWidth: typeof data.width === "number" ? data.width : 900,
     originalHeight: typeof data.height === "number" ? data.height : 600,
     textObjects: normalizeTextObjects(data.textObjects),
@@ -285,6 +358,10 @@ function normalizeTextObjects(raw: unknown): TextObject[] {
           typeof o.naturalnessSeed === "number"
             ? (o.naturalnessSeed as number)
             : Math.floor(Math.random() * 0xffffffff),
+        ...(typeof o.autoWrap === "boolean" ? { autoWrap: o.autoWrap } : {}),
+        ...(typeof o.layoutWidth === "number" ? { layoutWidth: o.layoutWidth } : {}),
+        ...(typeof o.maxLines === "number" ? { maxLines: o.maxLines } : {}),
+        ...(typeof o.naturalnessOffset === "number" ? { naturalnessOffset: o.naturalnessOffset } : {}),
         renderMode: o.renderMode === "handwritingGlyph" ? "handwritingGlyph" : "font",
         handwritingProfileId:
           typeof o.handwritingProfileId === "string"

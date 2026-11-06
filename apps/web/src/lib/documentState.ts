@@ -9,14 +9,17 @@ export interface DocumentState {
 export type DocumentAction =
   | { type: 'edit'; generation: number; update: (project: CanvasProject) => CanvasProject; at: string }
   | { type: 'select'; pageId: string }
-  | { type: 'replace'; project: CanvasProject }
+  | { type: 'replace'; project: CanvasProject; dirty?: boolean }
   | { type: 'saved'; generation: number; revision: number };
 export function documentState(project: CanvasProject): DocumentState {
   return { project, generation: 0, revision: 0, savedRevision: 0 };
 }
 export function documentReducer(state: DocumentState, action: DocumentAction): DocumentState {
   switch (action.type) {
-    case 'replace': return { ...documentState(action.project), generation: state.generation + 1 };
+    case 'replace': {
+      const base = documentState(action.project);
+      return { ...base, savedRevision: action.dirty ? -1 : base.savedRevision, generation: state.generation + 1 };
+    }
     case 'select':
       return state.project.pages.some(p => p.id === action.pageId)
         ? { ...state, project: { ...state.project, activePageId: action.pageId } } : state;

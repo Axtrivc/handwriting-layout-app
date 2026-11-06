@@ -2,13 +2,13 @@ packages:
   - "packages/*"
   - "apps/*"
 
+# 允许桌面构建所需依赖执行安装脚本。
 allowBuilds:
   core-js: true
   electron: true
   electron-winstaller: true
   esbuild: true
 
-# 允许以下依赖执行 install 脚本
 onlyBuiltDependencies:
   - electron
   - app-builder-bin

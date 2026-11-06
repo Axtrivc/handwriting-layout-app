@@ -15,16 +15,22 @@ export function useConnection() {
   const [status, setStatus] = useState<ConnectionStatus>({ kind: "idle" });
   const [apiBase, setApiBaseState] = useState<string>(() => getApiBase());
   const timerRef = useRef<number | null>(null);
+  const probeGeneration = useRef(0);
 
   const probe = useCallback(async () => {
+    const generation = ++probeGeneration.current;
     setStatus({ kind: "connecting" });
-    setStatus(await checkHealth());
+    const result = await checkHealth();
+    if (generation === probeGeneration.current) setStatus(result);
   }, []);
 
-  // 立即探测一次
+  const invalidateProbes = useCallback(() => { probeGeneration.current++; }, []);
+
+  // 立即探测一次，并忽略卸载或后续探测之前返回的旧结果。
   useEffect(() => {
     void probe();
-  }, [probe]);
+    return invalidateProbes;
+  }, [probe, invalidateProbes]);
 
   // 定时轮询
   useEffect(() => {
@@ -38,9 +44,15 @@ export function useConnection() {
 
   const updateApiBase = useCallback(
     (url: string) => {
-      setApiBase(url);
-      setApiBaseState(getApiBase());
-      void probe();
+      try {
+        setApiBase(url);
+        setApiBaseState(getApiBase());
+        void probe();
+        return true;
+      } catch (error) {
+        setStatus({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+        return false;
+      }
     },
     [probe],
   );

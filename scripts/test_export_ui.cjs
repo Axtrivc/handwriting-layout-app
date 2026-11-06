@@ -1,8 +1,12 @@
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {execFileSync}=require('node:child_process');
+const path=require('node:path');
+const JSZip=require('../apps/web/node_modules/jszip');
 const {canvasPoint}=require('./browser_canvas.cjs');
-const fixture=execFileSync('services/api/.venv/bin/python',['-c','import sys; sys.path.insert(0,"services/api/scripts"); from test_inpaint import CleanupTests; CleanupTests().fixture()[1].save(sys.stdout.buffer,format="PNG")']);
+const python=process.platform==='win32'?'services/api/.venv/Scripts/python.exe':'services/api/.venv/bin/python';
+const sharedUrl=`/@fs/${path.resolve('packages/shared/src/index.ts').replace(/\\/g,'/').replace(/^\/+/, '')}`;
+const fixture=execFileSync(python,['-c','import sys; sys.path.insert(0,"services/api/scripts"); from test_inpaint import CleanupTests; CleanupTests().fixture()[1].save(sys.stdout.buffer,format="PNG")']);
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
  const page=await browser.newPage({viewport:{width:1400,height:1000}});const errors=[];
@@ -29,29 +33,39 @@ const fixture=execFileSync('services/api/.venv/bin/python',['-c','import sys; sy
  await page.getByTitle('复制此页').click();
  await page.waitForTimeout(200);
  const duplicate=await download('导出 PNG');assert.deepEqual(duplicate,a,'duplicate page background is preserved');
+ const allPdf=await download('全 PDF');assert.equal((allPdf.toString('latin1').match(/\/Type\s*\/Page\b/g)??[]).length,2,'async PDF input must emit both pages');
+ const zipBuffer=await download('PNG ZIP');const zip=await JSZip.loadAsync(zipBuffer);
+ const pngEntries=Object.values(zip.files).filter(entry=>!entry.dir&&entry.name.endsWith('.png'));
+ assert.equal(pngEntries.length,2,'ZIP must contain both PNG pages');
+ for(const entry of pngEntries){const bytes=await entry.async('uint8array');assert.deepEqual(Array.from(bytes.slice(0,8)),[137,80,78,71,13,10,26,10]);}
  const visible=await page.locator('.canvas-viewport').evaluate(node=>{
   const c=node.querySelector('canvas'),ratio=c.width/c.clientWidth;
   const x=(Number(node.dataset.viewX)+5*Number(node.dataset.viewScale))*ratio;
   const y=(Number(node.dataset.viewY)+5*Number(node.dataset.viewScale))*ratio;
   return Array.from(c.getContext('2d').getImageData(x,y,1,1).data);
  });assert.equal(visible[3],255,'duplicate background must decode in editor');
- await download('保存');assert.equal(await page.locator('.dirty-dot').count(),0);
+ await download('保存');assert.equal(await page.locator('.dirty-dot').count(),1,'browser download cannot confirm a durable write');
  await page.locator('.hw-panel > details > summary').click();
  await page.getByPlaceholder('新档案名称（如：我的笔迹）').fill('测试档案');
  await page.getByRole('button',{name:'新建',exact:true}).click();assert.equal(await page.locator('.dirty-dot').count(),1,'profile edits must mark dirty');
  // Use the renderer directly to inspect rotation and deterministic naturalness.
- const render=await page.evaluate(async()=>{
+ const render=await page.evaluate(async(sharedUrl)=>{
   const {renderPageOffscreen}=await import('/src/lib/offscreenRender.ts');
-  const {createEmptyProject,DEFAULT_TEXT_STYLE}=await import('/@fs/workspace/handwriting-layout-app/packages/shared/src/index.ts');
+  const {createEmptyProject,DEFAULT_TEXT_STYLE}=await import(sharedUrl);
   const p=createEmptyProject();const page=p.pages[0];page.originalWidth=300;page.originalHeight=200;
   page.textObjects=[{id:'t',text:'MMMM',x:110,y:30,style:{...DEFAULT_TEXT_STYLE,fontSize:30,rotation:90},zIndex:0,naturalnessSeed:42,renderMode:'font',handwritingProfileId:null}];
   const options={profiles:[],activeProfileId:null,naturalness:p.settings.naturalness,naturalnessEnabled:false};
   const c=await renderPageOffscreen(page,options);const data=c.getContext('2d').getImageData(0,0,300,200).data;
   let minX=300,maxX=0,minY=200,maxY=0;for(let y=0;y<200;y++)for(let x=0;x<300;x++)if(data[(y*300+x)*4]<150){minX=Math.min(x,minX);maxX=Math.max(x,maxX);minY=Math.min(y,minY);maxY=Math.max(y,maxY);}
   options.naturalnessEnabled=true;const one=(await renderPageOffscreen(page,options)).toDataURL();const two=(await renderPageOffscreen(page,options)).toDataURL();
-  return {width:maxX-minX,height:maxY-minY,stable:one===two};
- });
+  const source=document.createElement('canvas');source.width=2;source.height=1;const sourceCtx=source.getContext('2d');sourceCtx.clearRect(0,0,2,1);sourceCtx.fillStyle='rgba(255,0,0,0.5)';sourceCtx.fillRect(1,0,1,1);
+  const transparentPage=createEmptyProject().pages[0];transparentPage.originalWidth=2;transparentPage.originalHeight=1;transparentPage.backgroundImage=source.toDataURL();
+  const flattened=await renderPageOffscreen(transparentPage,{profiles:[],activeProfileId:null,naturalness:p.settings.naturalness,naturalnessEnabled:false});const flatCtx=flattened.getContext('2d');
+  return {width:maxX-minX,height:maxY-minY,stable:one===two,white:Array.from(flatCtx.getImageData(0,0,1,1).data),blend:Array.from(flatCtx.getImageData(1,0,1,1).data)};
+ },sharedUrl);
  assert.ok(render.height>render.width*2,'rotation must be drawn, not ignored');assert.ok(render.stable);
+ assert.deepEqual(render.white,[255,255,255,255],'transparent background pixels are flattened to white');
+ assert.equal(render.blend[0],255);assert.equal(render.blend[3],255,'semi-transparent background pixels are composited over white');
  await page.getByRole('button',{name:'+ 新页',exact:true}).click();
  await page.getByRole('button',{name:'+ 添加文本框',exact:true}).click();
  const blankPage=await download('导出 PNG');

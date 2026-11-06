@@ -1,9 +1,11 @@
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const { canvasPoint } = require('./browser_canvas.cjs');
+const path = require('node:path');
+const sharedUrl = `/@fs/${path.resolve('packages/shared/src/index.ts').replace(/\\/g, '/').replace(/^\/+/, '')}`;
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage({ viewport: { width: 1500, height: 1100 } });
     const errors = [];
@@ -24,10 +26,14 @@ const { canvasPoint } = require('./browser_canvas.cjs');
       await (await chooser).setFiles({ name: 'natural.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
       await button('加载').waitFor();
     }
-    const save = async () => JSON.parse(await download('保存'));
+    const save = async () => {
+      const text = (await download('保存')).toString();
+      const { deserializeProject } = await import('../packages/shared/dist/index.js');
+      return deserializeProject(text).project;
+    };
     await page.goto('http://localhost:5173');
-    const project = await page.evaluate(async () => {
-      const { createEmptyProject, DEFAULT_TEXT_STYLE, DEFAULT_RENDER_SETTINGS } = await import('/@fs/workspace/handwriting-layout-app/packages/shared/src/index.ts');
+    const project = await page.evaluate(async sharedUrl => {
+      const { createEmptyProject, DEFAULT_TEXT_STYLE, DEFAULT_RENDER_SETTINGS } = await import(sharedUrl);
       const project = createEmptyProject();
       const glyphs = Array.from({ length: 4 }, (_, i) => {
         const canvas = document.createElement('canvas');
@@ -45,7 +51,7 @@ const { canvasPoint } = require('./browser_canvas.cjs');
         textObjects: [{ id: 't', text: '文文文 文文文', x: 80, y: 80, zIndex: 0, naturalnessSeed: 42,
           style: { ...DEFAULT_TEXT_STYLE, fontSize: 40 }, renderMode: 'handwritingGlyph', handwritingProfileId: 'p' }] });
       return project;
-    });
+    }, sharedUrl);
     await load(project);
     await button('100%').click();
     const first = await download('导出 PNG');

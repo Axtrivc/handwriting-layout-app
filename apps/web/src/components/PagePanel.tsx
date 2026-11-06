@@ -83,6 +83,15 @@ export function PagePanel({
               key={p.id}
               className={`page-item ${isActive ? "is-active" : ""}`}
               onClick={() => onSetActivePage(p.id)}
+              tabIndex={0}
+              aria-current={isActive ? "page" : undefined}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSetActivePage(p.id);
+                }
+              }}
             >
               <div className="page-item__thumb">
                 {p.backgroundImage ? (
@@ -95,6 +104,7 @@ export function PagePanel({
                 {renamingId === p.id ? (
                   <input
                     type="text"
+                    aria-label="页面名称"
                     value={renameDraft}
                     autoFocus
                     onClick={(e) => e.stopPropagation()}
@@ -104,6 +114,10 @@ export function PagePanel({
                       setRenamingId(null);
                     }}
                     onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setRenamingId(null);
+                      }
                       if (e.key === "Enter") {
                         if (renameDraft.trim()) onRenamePage(p.id, renameDraft);
                         setRenamingId(null);
@@ -131,6 +145,7 @@ export function PagePanel({
                 <button
                   className="btn btn--xs"
                   title="上移"
+                  aria-label="上移"
                   disabled={idx === 0}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -142,6 +157,7 @@ export function PagePanel({
                 <button
                   className="btn btn--xs"
                   title="下移"
+                  aria-label="下移"
                   disabled={idx === pages.length - 1}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -153,6 +169,7 @@ export function PagePanel({
                 <button
                   className="btn btn--xs"
                   title="复制此页"
+                  aria-label="复制此页"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDuplicatePage(p.id);
@@ -163,6 +180,7 @@ export function PagePanel({
                 <button
                   className="btn btn--xs"
                   title="删除"
+                  aria-label="删除页面"
                   disabled={pages.length <= 1}
                   onClick={(e) => {
                     e.stopPropagation();

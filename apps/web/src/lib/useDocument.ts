@@ -16,7 +16,7 @@ export function useDocument() {
     });
   }, [edit]);
   const selectPage = useCallback((pageId: string) => dispatch({ type: 'select', pageId }), []);
-  const replace = useCallback((project: CanvasProject) => dispatch({ type: 'replace', project }), []);
+  const replace = useCallback((project: CanvasProject, dirty = false) => dispatch({ type: 'replace', project, dirty }), []);
   const markSaved = useCallback(() => dispatch({ type: 'saved', generation, revision }), [generation, revision]);
   return { project: state.project, generation, dirty: revision !== state.savedRevision,
     edit, updatePage, selectPage, replace, markSaved };

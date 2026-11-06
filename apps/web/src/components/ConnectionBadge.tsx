@@ -5,7 +5,7 @@ interface ConnectionBadgeProps {
   status: ConnectionStatus;
   apiBase: string;
   onReconnect: () => void;
-  onApiBaseChange: (url: string) => void;
+  onApiBaseChange: (url: string) => boolean;
 }
 
 /**
@@ -25,7 +25,7 @@ export function ConnectionBadge({
 
   return (
     <div className="conn">
-      <span className={`conn__dot conn__dot--${status.kind}`} />
+      <span className={`conn__dot conn__dot--${status.kind}`} aria-hidden="true" />
       <span className="conn__label" title={apiBase}>
         {label}
       </span>
@@ -33,6 +33,7 @@ export function ConnectionBadge({
         className="btn btn--xs"
         onClick={onReconnect}
         title="重新检测连接"
+        aria-label="重新检测连接"
       >
         ↻
       </button>
@@ -43,22 +44,27 @@ export function ConnectionBadge({
           setEditing((v) => !v);
         }}
         title="修改后端地址"
+        aria-label="修改后端地址"
       >
         ⚙
       </button>
       {editing && (
         <span className="conn__edit">
           <input
-            type="text"
+            type="url"
+            aria-label="后端地址"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && onApiBaseChange(draft)) setEditing(false);
+              if (e.key === "Escape") setEditing(false);
+            }}
             placeholder="http://127.0.0.1:8001"
           />
           <button
             className="btn btn--xs btn--primary"
             onClick={() => {
-              onApiBaseChange(draft);
-              setEditing(false);
+              if (onApiBaseChange(draft)) setEditing(false);
             }}
           >
             保存

@@ -63,6 +63,14 @@ export interface TextObject {
    * 保证同一项目重复导出时该对象的抖动一致。
    */
   naturalnessSeed: number;
+  /** 是否按 layoutWidth 自动换行；缺省 false 保持旧项目排版。 */
+  autoWrap?: boolean;
+  /** 自动换行宽度 (px)，缺省 600，仅在 autoWrap 时生效。 */
+  layoutWidth?: number;
+  /** 溢出提示及用户触发分页的行数上限；缺省不限制。 */
+  maxLines?: number;
+  /** 分页对象在原文中的起始 code point 偏移，保持字形选择连续。 */
+  naturalnessOffset?: number;
   /**
    * 渲染模式：
    * - font：用系统字体渲染
@@ -121,6 +129,8 @@ export interface ScanTransform { rotation: number; scale: number }
 export interface CleanHistoryEntry {
   scanTransform?: ScanTransform;
   scanColorSource?: string;
+  /** 操作前的页面级彩色来源；null 表示无，缺失表示旧版记录。 */
+  beforeColorSource?: string | null;
   /** Missing on older files: treat as a cleanup. */
   operation?: "clean" | "scan";
   /** 处理前的背景图 dataURL */
@@ -153,6 +163,8 @@ export interface CanvasPage {
   index: number;
   /** 背景图 dataURL 或 URL */
   backgroundImage: string | null;
+  /** 当前页面独立的彩色来源；null 表示无，缺失时从旧版历史推导。 */
+  colorSource?: string | null;
   /** 原图宽度（px） */
   originalWidth: number;
   /** 原图高度（px） */

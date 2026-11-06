@@ -6,7 +6,7 @@ import { cleanRegion, prepareScan } from "./apiClient.js";
 import { describeError } from "./errors.js";
 import { loadImage, fileToDataURL, splitDataURL, joinDataURL, uid } from "./image.js";
 
-import { transformTexts, colorSourceForPage } from "./scanGeometry.js";
+import { transformTexts, colorSourceForPage, colorSourceAfterOperation, colorSourceAfterUndo } from "./scanGeometry.js";
 
 type Operation = "clean" | "scan";
 interface BackgroundPreview {
@@ -115,7 +115,8 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
       if (!isCurrent(token, activePage.id, source)) return;
       checkDimensions(image, activePage);
       updatePage(activePage.id, pg => pg.backgroundImage !== source ? pg : ({
-        ...pg, textObjects: transformTexts(pg.textObjects, pg, last.scanTransform, true), backgroundImage: last.beforeImage, cleanHistory: pg.cleanHistory.slice(0, -1), updatedAt: nowISO(),
+        ...pg, textObjects: transformTexts(pg.textObjects, pg, last.scanTransform, true), backgroundImage: last.beforeImage,
+        colorSource: colorSourceAfterUndo(pg), cleanHistory: pg.cleanHistory.slice(0, -1), updatedAt: nowISO(),
       }));
       if (last.scanTransform) onGeometryChange(activePage, last.scanTransform, true);
       setCleanPreview(null);
@@ -186,12 +187,17 @@ export function useCleanup({ project, activePage, generation, updatePage, showTo
   const handleApplyClean = () => {
     if (!visiblePreview) return;
     const { pageId, beforeImage, afterImage, selections: regions, strokes: paths, operation, transform, colorSource } = visiblePreview;
-    updatePage(pageId, pg => pg.backgroundImage !== beforeImage ? pg : ({ ...pg, textObjects: transformTexts(pg.textObjects, pg, transform), backgroundImage: afterImage,
-      cleanHistory: [...pg.cleanHistory, { beforeImage, afterImage, regions, operation,
-        ...(transform ? { scanTransform: transform } : {}),
-        ...(colorSource ? { scanColorSource: colorSource } : {}),
-        ...(paths.length ? { strokes: paths.map(({ points, width }) => ({ points, width })) } : {}) }].slice(-10), updatedAt: nowISO(),
-    }));
+    updatePage(pageId, pg => {
+      if (pg.backgroundImage !== beforeImage) return pg;
+      const beforeColorSource = colorSourceForPage(pg) ?? null;
+      return { ...pg, textObjects: transformTexts(pg.textObjects, pg, transform), backgroundImage: afterImage,
+        colorSource: colorSourceAfterOperation(pg, operation, beforeImage, colorSource),
+        cleanHistory: [...pg.cleanHistory, { beforeImage, afterImage, regions, operation, beforeColorSource,
+          ...(transform ? { scanTransform: transform } : {}),
+          ...(colorSource ? { scanColorSource: colorSource } : {}),
+          ...(paths.length ? { strokes: paths.map(({ points, width }) => ({ points, width })) } : {}) }].slice(-10), updatedAt: nowISO(),
+      };
+    });
     setCleanPreview(null);
     setCompareOriginal(false);
     if (transform && activePage) onGeometryChange(activePage, transform);

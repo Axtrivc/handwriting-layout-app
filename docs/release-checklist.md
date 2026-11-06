@@ -12,7 +12,8 @@
 
 ## 2. Python 后端
 
-- [ ] venv 依赖可装：`pip install -r services/api/requirements.txt`
+- [ ] venv 依赖可装：`pip install -r services/api/requirements.txt -r services/api/requirements-dev.txt`
+- [ ] `python -m pytest -p no:cacheprovider services/api/tests -q` 通过（图片安全与 OCR 契约）
 - [ ] `python services/api/scripts/test_glyph.py` 通过
 - [ ] `python services/api/scripts/test_detect.py` 通过
 - [ ] `python services/api/scripts/test_ocr.py` 通过（unavailable）
@@ -21,22 +22,22 @@
 
 ## 3. Node 测试
 
-- [ ] `node scripts/test_multipage.mjs` 通过（多页）
-- [ ] `node scripts/test_export_history.mjs` 通过（导出/历史）
-- [ ] `node scripts/test_ocr_lazy.mjs` 通过（OCR/懒加载）
-- [ ] `node scripts/test_handwriting_r4.mjs` 通过（手写系统）
+- [ ] `pnpm test:unit` 全部通过（会构建 shared/web/desktop 并执行离线回归）
+- [ ] `pnpm test:e2e` 通过（自动启动 Vite，覆盖原生保存契约、工程恢复、多页 PDF、PNG ZIP 与透明背景）
+- [ ] 其余浏览器回归按 `docs/cleanup-validation.md` 运行
 
 ## 4. 桌面
 
-- [ ] `pnpm build:desktop` 成功，dist/main.cjs 生成
+- [ ] `pnpm build:desktop` 成功，`dist/main.cjs` 与 `dist/preload.cjs` 生成
 - [ ] desktop typecheck 通过
 - [ ] prod 加载验证：`pnpm --filter @hw-layout/desktop start` 能加载 web/dist
-- [ ] dev 模式：`pnpm dev:desktop` 能加载 vite
-- [ ] 后端不可用时弹窗提示
-- [ ] exe 打包（需稳定网络）：`pnpm package:dist`（electron-builder）
-  - 第九轮实测：electron-builder 因 Windows 工具链（squirrel-windows）下载超时未完成
-  - prod 模式 `electron .` 启动验证通过
-  - 复现方案：网络稳定后 `pnpm package:dist`，或用 `pnpm dlx electron-builder --win portable`
+- [ ] dev 模式：`pnpm dev:desktop` 能加载 vite，并自动复用或启动 API
+- [ ] 后端不可用且无法启动时弹窗提示
+- [ ] 原生保存取消/失败保留 dirty，成功写入后才清除 dirty
+- [ ] `pnpm build:api` 生成 `services/api/dist/hw-api`
+- [ ] `pnpm package:desktop` 生成含 `resources/backend/hw-api` 的目录包
+- [ ] `pnpm package:dist` 生成 NSIS 安装包；默认未签名，发布签名版本前另行配置证书与签名流程
+- [ ] 在未预装 Python 的干净环境安装后，启动应用即可调用 `/health` 并完成扫描/清除
 
 ## 5. 手工 QA
 

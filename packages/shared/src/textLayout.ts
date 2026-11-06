@@ -9,19 +9,28 @@
  */
 import { pickVariant, type HandwritingProfile, type HandwritingGlyph } from "./handwriting.js";
 
+const glyphGroupCache = new WeakMap<HandwritingGlyph[], { count: number; grouped: Map<string, HandwritingGlyph[]> }>();
+
 function groupGlyphs(profile: HandwritingProfile | null) {
+  if (!profile) return new Map<string, HandwritingGlyph[]>();
+  const glyphs = profile.glyphs;
+  const cached = glyphGroupCache.get(glyphs);
+  if (cached?.count === glyphs.length) return cached.grouped;
   const grouped = new Map<string, HandwritingGlyph[]>();
-  for (const glyph of profile?.glyphs ?? []) {
+  for (const glyph of glyphs) {
     const variants = grouped.get(glyph.char);
     if (variants) variants.push(glyph);
     else grouped.set(glyph.char, [glyph]);
   }
+  glyphGroupCache.set(glyphs, { count: glyphs.length, grouped });
   return grouped;
 }
 import type { NaturalnessParams, TextObject } from "./types.js";
 
 /** 一个待绘制单元（glyph 图片 或 fallback 字符）。 */
 export interface LayoutGlyph {
+  /** 原文字符索引，自动换行时用同一索引生成稳定自然化。 */
+  sourceIndex: number;
   /** 字符 */
   ch: string;
   /** 左上角 x（已应用对齐偏移 + naturalness 位置抖动） */
@@ -48,11 +57,25 @@ export interface LayoutLine {
   glyphs: LayoutGlyph[];
   /** 该行未抖动时的总宽度（用于对齐计算） */
   baseWidth: number;
+  /** 该行首字符在原文中的 code point 索引。 */
+  sourceIndex: number;
+  /** 原文 UTF-16 起止偏移，用于无损分页。 */
+  sourceStart: number;
+  sourceEnd: number;
 }
 
 /** 文本布局结果。 */
 export interface LayoutResult {
   lines: LayoutLine[];
+  /** 超出 maxLines 的行数；内容仍全部布局，不会静默截断。 */
+  overflowLines: number;
+  /** 超出行中的 Unicode code point 数量。 */
+  overflowCharacters: number;
+}
+
+export interface TextPageRange {
+  startOffset: number;
+  endOffset: number;
 }
 
 /** 测量一个 glyph 的显示宽度。绘制层传入已加载图片的原始尺寸。 */
@@ -101,84 +124,97 @@ export interface LayoutOptions {
  * 4. 应用 naturalness：逐字 scale/opacity jitter，逐行 baseline jitter
  */
 export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
-  const lines = obj.text.split("\n");
   const lineHeightPx = obj.style.fontSize * obj.style.lineHeight;
   const profileScale = opts.profile?.defaultRenderSettings.scale ?? 1;
   const variantsByChar = groupGlyphs(opts.profile);
 
-  // 组合种子
+  // 随机值使用原文 seed；自动换行/分页另以全局字符索引取样。
   const baseSeed =
     opts.exportSeed !== undefined
       ? (obj.naturalnessSeed ^ opts.exportSeed) >>> 0
       : obj.naturalnessSeed;
   const rand = seededRandom(baseSeed);
 
-  // 第一遍：算每行 baseWidth 与每字的基础信息
+  // 第一遍：确定每个字符及无损原文边界，再按宽度分行。
   interface RawChar {
     ch: string;
     glyphKey: string | null;
     isGlyph: boolean;
     baseWidth: number;
     imgNatural?: { width: number; height: number };
+    sourceIndex: number;
+    sourceStart: number;
+    sourceEnd: number;
   }
-  const rawLines: { chars: RawChar[]; baseWidth: number }[] = [];
+  const rawLines: { chars: RawChar[]; baseWidth: number; sourceIndex: number; sourceStart: number; sourceEnd: number }[] = [];
   let absIdx = 0;
+  let sourceOffset = 0;
   const previousVariants = new Map<string, { id: string; count: number }>();
-  for (const line of lines) {
-    const chars: RawChar[] = [];
-    let baseWidth = 0;
-    for (const ch of line) {
-      if (ch === " ") {
-        const w = obj.style.fontSize * 0.5;
-        chars.push({ ch, glyphKey: null, isGlyph: false, baseWidth: w });
-        baseWidth += w + opts.letterSpacing;
-        absIdx++;
-        continue;
-      }
-      const variants = variantsByChar.get(ch) ?? [];
-      const seed = obj.naturalnessSeed + absIdx;
-      const mode = opts.profile?.defaultRenderSettings.preferredVariantMode;
-      const previous = previousVariants.get(ch);
-      // With only two samples, excluding every repeat would create a mechanical ABAB cycle.
-      const avoidRepeat = variants.length > 2 || (previous?.count ?? 0) >= 2;
-      const candidates = mode !== 'first' && mode !== 'weighted' && variants.length > 1 && avoidRepeat
-        ? variants.filter(g => g.id !== previous?.id) : variants;
-      const glyph =
-        variants.length > 0
-          ? pickVariant(candidates, seed, mode)
-          : null;
-      if (glyph) {
-        previousVariants.set(ch, { id: glyph.id, count: previous?.id === glyph.id ? previous.count + 1 : 1 });
-        const glyphKey = `${opts.profile!.id}:${glyph.id}`;
-        const img = opts.glyphSize(glyphKey);
-        if (img) {
-          const w = glyphDisplayWidth(img.naturalWidth, img.naturalHeight, obj.style.fontSize, profileScale);
-          chars.push({
-            ch, glyphKey, isGlyph: true, baseWidth: w,
-            imgNatural: { width: img.naturalWidth, height: img.naturalHeight },
-          });
-          baseWidth += w + opts.letterSpacing;
-        } else {
-          // 图片还在加载，按 fallback 宽度占位
-          const w = fontCharWidth(ch, obj.style.fontSize);
-          chars.push({ ch, glyphKey: null, isGlyph: false, baseWidth: w });
-          baseWidth += w + opts.letterSpacing;
-        }
-      } else {
-        const w = fontCharWidth(ch, obj.style.fontSize);
-        chars.push({ ch, glyphKey: null, isGlyph: false, baseWidth: w });
-        baseWidth += w + opts.letterSpacing;
-      }
-      absIdx++;
+  const maxWidth = obj.autoWrap ? Math.max(1, obj.layoutWidth ?? 600) : Infinity;
+  const continuousFlow = obj.autoWrap || (obj.naturalnessOffset ?? 0) > 0;
+  const nextChar = (ch: string): RawChar => {
+    const sourceStart = sourceOffset;
+    sourceOffset += ch.length;
+    const charIndex = absIdx++;
+    if (ch === " ") {
+      return { ch, glyphKey: null, isGlyph: false, baseWidth: obj.style.fontSize * 0.5,
+        sourceIndex: charIndex, sourceStart, sourceEnd: sourceOffset };
     }
-    if (chars.length > 0) baseWidth -= opts.letterSpacing;
-    rawLines.push({ chars, baseWidth: Math.max(0, baseWidth) });
+    const variants = variantsByChar.get(ch) ?? [];
+    const seed = obj.naturalnessSeed + (obj.naturalnessOffset ?? 0) + charIndex;
+    const mode = opts.profile?.defaultRenderSettings.preferredVariantMode;
+    const previous = previousVariants.get(ch);
+    // With only two samples, excluding every repeat would create a mechanical ABAB cycle.
+    const avoidRepeat = variants.length > 2 || (previous?.count ?? 0) >= 2;
+    const candidates = !continuousFlow && mode !== 'first' && mode !== 'weighted' && variants.length > 1 && avoidRepeat
+      ? variants.filter(g => g.id !== previous?.id) : variants;
+    const glyph = variants.length > 0 ? pickVariant(candidates, seed, mode) : null;
+    if (glyph) {
+      previousVariants.set(ch, { id: glyph.id, count: previous?.id === glyph.id ? previous.count + 1 : 1 });
+      const glyphKey = `${opts.profile!.id}:${glyph.id}`;
+      const img = opts.glyphSize(glyphKey);
+      if (img) {
+        return { ch, glyphKey, isGlyph: true,
+          baseWidth: glyphDisplayWidth(img.naturalWidth, img.naturalHeight, obj.style.fontSize, profileScale),
+          imgNatural: { width: img.naturalWidth, height: img.naturalHeight },
+          sourceIndex: charIndex, sourceStart, sourceEnd: sourceOffset };
+      }
+    }
+    // 缺字或图片仍在加载时使用 fallback 宽度，加载完成后会重新布局。
+    return { ch, glyphKey: null, isGlyph: false,
+      baseWidth: fontCharWidth(ch, obj.style.fontSize), sourceIndex: charIndex, sourceStart, sourceEnd: sourceOffset };
+  };
+  const widthOf = (chars: RawChar[]) => chars.reduce((width, rc, index) =>
+    width + rc.baseWidth + (index > 0 ? opts.letterSpacing : 0), 0);
+  const lines = obj.text.split("\n");
+  for (const [lineIndex, line] of lines.entries()) {
+    let chars: RawChar[] = [];
+    let currentWidth = 0;
+    const pushLine = () => {
+      rawLines.push({ chars, baseWidth: Math.max(0, widthOf(chars)),
+        sourceIndex: chars[0]?.sourceIndex ?? absIdx,
+        sourceStart: chars[0]?.sourceStart ?? sourceOffset,
+        sourceEnd: chars.at(-1)?.sourceEnd ?? sourceOffset });
+    };
+    for (const ch of line) {
+      const rc = nextChar(ch);
+      if (chars.length > 0 && rc.ch !== " " && currentWidth + opts.letterSpacing + rc.baseWidth > maxWidth) {
+        pushLine();
+        chars = [];
+        currentWidth = 0;
+      }
+      currentWidth += (chars.length > 0 ? opts.letterSpacing : 0) + rc.baseWidth;
+      chars.push(rc);
+    }
+    pushLine();
+    if (lineIndex < lines.length - 1) sourceOffset++;
   }
 
   // 第二遍：按对齐 + jitter 生成最终 LayoutGlyph
   const resultLines: LayoutLine[] = [];
+  const continuousJitter = obj.autoWrap || (obj.naturalnessOffset ?? 0) > 0;
   for (let li = 0; li < rawLines.length; li++) {
-    const { chars, baseWidth } = rawLines[li];
+    const { chars, baseWidth, sourceIndex, sourceStart, sourceEnd } = rawLines[li];
     let x: number;
     if (obj.style.align === "center") {
       x = obj.x - baseWidth / 2;
@@ -192,7 +228,9 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
     // 行 baseline jitter
     let rowDy = 0;
     if (opts.applyJitter && opts.naturalness.baselineJitter > 0) {
-      rowDy = (rand() * 2 - 1) * opts.naturalness.baselineJitter;
+      rowDy = continuousJitter
+        ? (randomAt(baseSeed, (obj.naturalnessOffset ?? 0) + sourceIndex, 6) * 2 - 1) * opts.naturalness.baselineJitter
+        : (rand() * 2 - 1) * opts.naturalness.baselineJitter;
     }
 
     const outGlyphs: LayoutGlyph[] = [];
@@ -200,7 +238,10 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
     let tilt = 0;
     for (const rc of chars) {
       if (rc.ch === " ") {
-        x += rc.baseWidth + opts.letterSpacing + (opts.applyJitter ? (rand()*2-1)*Math.min(rc.baseWidth*.15,opts.naturalness.positionJitter) : 0);
+        const spaceJitter = opts.applyJitter
+          ? (continuousJitter ? randomAt(baseSeed, (obj.naturalnessOffset ?? 0) + rc.sourceIndex, 5) * 2 - 1 : rand() * 2 - 1) * Math.min(rc.baseWidth * .15, opts.naturalness.positionJitter)
+          : 0;
+        x += rc.baseWidth + opts.letterSpacing + spaceJitter;
         continue;
       }
       // 逐字 jitter
@@ -208,18 +249,29 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
       let jitterDx = 0;
       let jitterOpacity = obj.style.opacity;
       if (opts.applyJitter) {
-        drift = .7 * drift + .3 * (rand()*2-1) * opts.naturalness.baselineJitter;
-        tilt = .65 * tilt + .35 * (rand()*2-1) * opts.naturalness.rotationJitter;
-        const r = rand();
+        let r: number;
+        if (continuousJitter) {
+          const globalIndex = (obj.naturalnessOffset ?? 0) + rc.sourceIndex;
+          const previousDrift = globalIndex > 0 ? randomAt(baseSeed, globalIndex - 1, 0) * 2 - 1 : 0;
+          const previousTilt = globalIndex > 0 ? randomAt(baseSeed, globalIndex - 1, 1) * 2 - 1 : 0;
+          drift = (.7 * previousDrift + .3 * (randomAt(baseSeed, globalIndex, 0) * 2 - 1)) * opts.naturalness.baselineJitter;
+          tilt = (.65 * previousTilt + .35 * (randomAt(baseSeed, globalIndex, 1) * 2 - 1)) * opts.naturalness.rotationJitter;
+          r = randomAt(baseSeed, globalIndex, 2);
+        } else {
+          drift = .7 * drift + .3 * (rand()*2-1) * opts.naturalness.baselineJitter;
+          tilt = .65 * tilt + .35 * (rand()*2-1) * opts.naturalness.rotationJitter;
+          r = rand();
+        }
         if (opts.naturalness.fontSizeJitter > 0) {
           jitterScale *= 1 + (r * 2 - 1) * (opts.naturalness.fontSizeJitter / obj.style.fontSize);
         }
         if (opts.naturalness.positionJitter > 0) {
-          jitterDx = (rand() * 2 - 1) * opts.naturalness.positionJitter;
+          jitterDx = ((continuousJitter ? randomAt(baseSeed, (obj.naturalnessOffset ?? 0) + rc.sourceIndex, 3) : rand()) * 2 - 1) * opts.naturalness.positionJitter;
         }
         if (opts.naturalness.opacityJitter > 0) {
+          const opacityRandom = continuousJitter ? randomAt(baseSeed, (obj.naturalnessOffset ?? 0) + rc.sourceIndex, 4) : rand();
           jitterOpacity = clamp(
-            jitterOpacity + (rand() * 2 - 1) * opts.naturalness.opacityJitter,
+            jitterOpacity + (opacityRandom * 2 - 1) * opts.naturalness.opacityJitter,
             0.1,
             1,
           );
@@ -233,6 +285,7 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
         const drawH = rc.imgNatural.height * s;
         outGlyphs.push({
           ch: rc.ch,
+          sourceIndex: rc.sourceIndex,
           x: x + jitterDx,
           y: y + rowDy + drift + (drawH < obj.style.fontSize ? (obj.style.fontSize - drawH) / 2 : 0),
           width: drawW,
@@ -247,6 +300,7 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
       } else {
         outGlyphs.push({
           ch: rc.ch,
+          sourceIndex: rc.sourceIndex,
           x: x + jitterDx,
           y: y + rowDy + drift,
           width: rc.baseWidth * jitterScale,
@@ -260,10 +314,40 @@ export function layoutText(obj: TextObject, opts: LayoutOptions): LayoutResult {
         x += rc.baseWidth + opts.letterSpacing;
       }
     }
-    resultLines.push({ glyphs: outGlyphs, baseWidth });
+    resultLines.push({ glyphs: outGlyphs, baseWidth, sourceIndex, sourceStart, sourceEnd });
   }
 
-  return { lines: resultLines };
+  const overflow = obj.maxLines !== undefined ? resultLines.slice(obj.maxLines) : [];
+  return {
+    lines: resultLines,
+    overflowLines: overflow.length,
+    overflowCharacters: overflow.reduce((count, line) =>
+      count + Array.from(obj.text.slice(line.sourceStart, line.sourceEnd)).length, 0),
+  };
+}
+
+/** Split a fully laid-out text into explicit pages without dropping overflow. */
+export function textPageRanges(layout: LayoutResult, maxLines: number): TextPageRange[] {
+  if (!Number.isInteger(maxLines) || maxLines < 1) throw new Error("每页行数必须是正整数");
+  const ranges: TextPageRange[] = [];
+  for (let start = 0; start < layout.lines.length; start += maxLines) {
+    const pageLines = layout.lines.slice(start, start + maxLines);
+    ranges.push({
+      startOffset: pageLines[0].sourceStart,
+      endOffset: pageLines[pageLines.length - 1].sourceEnd,
+    });
+  }
+  return ranges;
+}
+
+function randomAt(seed: number, index: number, channel: number): number {
+  let value = (seed ^ Math.imul(index + 1, 0x9e3779b1) ^ Math.imul(channel + 1, 0x85ebca6b)) >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d);
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b);
+  value ^= value >>> 16;
+  return (value >>> 0) / 0x100000000;
 }
 
 function clamp(v: number, min: number, max: number): number {

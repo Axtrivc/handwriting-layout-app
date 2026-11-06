@@ -1,4 +1,4 @@
-import { missingChars, type HandwritingProfile, type TextAlign, type TextObject } from "@hw-layout/shared";
+import { missingChars, type HandwritingProfile, type LayoutResult, type TextAlign, type TextObject } from "@hw-layout/shared";
 
 interface StylePanelProps {
   selected: TextObject | null;
@@ -7,6 +7,9 @@ interface StylePanelProps {
   onDuplicate: (id: string) => void;
   onBringToFront: (id: string) => void;
   onSendToBack: (id: string) => void;
+  onPaginate: (id: string) => void;
+  layout: LayoutResult | null;
+  layoutReady: boolean;
   profiles: HandwritingProfile[];
   activeProfileId: string | null;
 }
@@ -30,6 +33,9 @@ export function StylePanel({
   onDuplicate,
   onBringToFront,
   onSendToBack,
+  onPaginate,
+  layout,
+  layoutReady,
   profiles,
   activeProfileId,
 }: StylePanelProps) {
@@ -57,6 +63,59 @@ export function StylePanel({
           onChange={(e) => onChange({ ...selected, text: e.target.value })}
           placeholder="输入文本（支持换行）"
         />
+      </div>
+
+      <p className="panel__title">长文本排版</p>
+      <div className="field">
+        <label>
+          <input
+            type="checkbox"
+            checked={selected.autoWrap ?? false}
+            onChange={(e) => onChange({ ...selected, autoWrap: e.target.checked,
+              layoutWidth: selected.layoutWidth ?? 600 })}
+          />{" "}自动换行
+        </label>
+        {selected.autoWrap && (
+          <>
+            <label htmlFor="text-layout-width">文本宽度（px）</label>
+            <input
+              id="text-layout-width"
+              type="number"
+              min={1}
+              max={16384}
+              value={selected.layoutWidth ?? 600}
+              onChange={(e) => onChange({ ...selected, layoutWidth: Number(e.target.value) })}
+            />
+          </>
+        )}
+        <label htmlFor="text-max-lines">最大行数（空为不限）</label>
+        <input
+          id="text-max-lines"
+          type="number"
+          min={1}
+          step={1}
+          placeholder="不限"
+          value={selected.maxLines ?? ""}
+          onChange={(e) => onChange({ ...selected,
+            maxLines: e.target.value ? Math.max(1, Math.round(Number(e.target.value))) : undefined })}
+        />
+        <div className="hint" role="status">
+          当前共 {layout?.lines.length ?? 0} 行
+          {!layoutReady && "；字形图片加载中"}
+          {(layout?.overflowLines ?? 0) > 0 && (
+            <span className="missing-chars">
+              {"\n"}超出 {layout!.overflowLines} 行 / {layout!.overflowCharacters} 字；内容未截断，请分页或调整文本框
+            </span>
+          )}
+        </div>
+        <button
+          className="btn"
+          onClick={() => onPaginate(selected.id)}
+          disabled={!selected.maxLines || !layoutReady || !layout || layout.lines.length <= selected.maxLines}
+          title="保留当前页为第一段，并在后续页面继续剩余文本"
+        >
+          按最大行数分页
+        </button>
       </div>
 
       <p className="panel__title">渲染模式</p>

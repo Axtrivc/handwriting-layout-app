@@ -88,9 +88,9 @@ export async function renderPageOffscreen(
   try {
     const layer = new Konva.Layer();
     stage.add(layer);
+    layer.add(new Konva.Rect({ width: page.originalWidth, height: page.originalHeight, fill: "white" }));
     if (page.backgroundImage) layer.add(new Konva.Image({ image: await loadImageEl(page.backgroundImage),
       width: page.originalWidth, height: page.originalHeight }));
-    else layer.add(new Konva.Rect({ width: page.originalWidth, height: page.originalHeight, fill: "white" }));
     const profiles = new Map(opts.profiles.map(p => [p.id, p]));
     const images = opts.glyphStore ?? await preloadPageGlyphs(page, opts.profiles, opts.activeProfileId);
     for (const obj of [...page.textObjects].sort((a, b) => a.zIndex - b.zIndex)) {

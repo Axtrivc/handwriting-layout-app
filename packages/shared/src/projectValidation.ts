@@ -55,6 +55,10 @@ function text(record: RecordValue, path: string) {
   stringField(record, 'text', path);
   for (const key of ['x', 'y', 'zIndex']) numberField(record, key, path);
   numberField(record, 'naturalnessSeed', path, 0, 0xffffffff, false, true);
+  booleanField(record, 'autoWrap', path);
+  numberField(record, 'layoutWidth', path, 1, 16384);
+  numberField(record, 'maxLines', path, 1, 10000, false, true);
+  numberField(record, 'naturalnessOffset', path, 0, 1_000_000_000, false, true);
   nullableString(record, 'handwritingProfileId', path);
   if (record.renderMode !== undefined && !['font', 'handwritingGlyph'].includes(record.renderMode as string)) fail(`${path}.renderMode`, '未知渲染模式');
   optionalObject(record, 'style', path, (style, p) => {
@@ -77,6 +81,7 @@ function page(record: RecordValue, path: string) {
   const height = (record.originalHeight ?? record.height ?? 600) as number;
   if (width * height > 64_000_000) fail(path, '页面超过当前画布的 6400 万像素上限');
   nullableString(record, 'backgroundImage', path);
+  nullableString(record, 'colorSource', path);
   list(record, 'textObjects', path, text, true);
   list(record, 'cleanHistory', path, (entry, p) => {
     if (entry.operation !== undefined && !['clean', 'scan'].includes(entry.operation as string)) fail(`${p}.operation`, '未知图片操作');
@@ -85,6 +90,7 @@ function page(record: RecordValue, path: string) {
       numberField(t, 'scale', path, 0.5, 1, true);
     });
     stringField(entry, 'scanColorSource', p);
+    nullableString(entry, 'beforeColorSource', p);
     stringField(entry, 'beforeImage', p, true);
     stringField(entry, 'afterImage', p, true);
     if (!Array.isArray(entry.regions)) fail(`${p}.regions`, '应为数组');

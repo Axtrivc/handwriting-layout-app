@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createEmptyProject, DEFAULT_TEXT_STYLE, serializeProject, deserializeProject } from '../packages/shared/dist/index.js';
-import { transformTexts, colorSourceForPage } from '../apps/web/src/lib/scanGeometry.ts';
+import { transformTexts, colorSourceForPage, colorSourceAfterOperation, colorSourceAfterUndo } from '../apps/web/src/lib/scanGeometry.ts';
 import { HistoryStore } from '../apps/web/src/lib/historyStore.ts';
 const p=createEmptyProject(), page=p.pages[0];
 const text={id:'t',text:'恢复',x:40,y:75,style:{...DEFAULT_TEXT_STYLE,rotation:7,letterSpacing:2},zIndex:1,naturalnessSeed:42,renderMode:'font',handwritingProfileId:null};
@@ -24,4 +24,41 @@ for(const invalid of [{rotation:NaN,scale:1},{rotation:90,scale:1},{rotation:3,s
  const bad=structuredClone(p);bad.pages[0].cleanHistory[0].scanTransform=invalid;
  assert.equal(deserializeProject(JSON.stringify(bad)).ok,false);
 }
-console.log('PASS: text geometry/inverse, aligned color history, save/load and malformed transform rejection');
+
+function applyBackground(page,operation,afterImage,correctedColor) {
+ const beforeImage=page.backgroundImage;
+ const beforeColorSource=colorSourceForPage(page)??null;
+ return {...page,backgroundImage:afterImage,
+  colorSource:colorSourceAfterOperation(page,operation,beforeImage,correctedColor),
+  cleanHistory:[...page.cleanHistory,{operation,beforeImage,afterImage,regions:[],beforeColorSource,
+   ...(correctedColor?{scanColorSource:correctedColor}:{})}].slice(-10)};
+}
+function undoBackground(page) {
+ const last=page.cleanHistory.at(-1);
+ return {...page,backgroundImage:last.beforeImage,colorSource:colorSourceAfterUndo(page),cleanHistory:page.cleanHistory.slice(0,-1)};
+}
+const original=createEmptyProject().pages[0];original.backgroundImage='raw-color';
+const scanned=applyBackground(original,'scan','scan-bw','aligned-color');
+assert.equal(colorSourceForPage(scanned),'aligned-color');
+assert.equal(colorSourceForPage(undoBackground(scanned)),undefined,'undoing the first scan restores the absent color source');
+const repaired=applyBackground(scanned,'clean','reference-repair','reference-color');
+assert.equal(colorSourceForPage(repaired),'reference-color');
+assert.equal(colorSourceForPage(undoBackground(repaired)),'aligned-color','undoing reference repair restores the prior source');
+let cleaned=scanned;
+for(let i=0;i<10;i++) cleaned=applyBackground(cleaned,'clean',`clean-${i}`);
+assert.equal(cleaned.cleanHistory.length,10);
+assert.equal(cleaned.cleanHistory.some(entry=>entry.operation==='scan'),false,'the scan has left the bounded history');
+assert.equal(colorSourceForPage(cleaned),'aligned-color','page asset survives ten cleanups');
+const saved=deserializeProject(serializeProject({...p,pages:[cleaned],activePageId:cleaned.id}));
+assert.ok(saved.ok);assert.equal(colorSourceForPage(saved.project.pages[0]),'aligned-color','page asset survives save/load');
+let undone=saved.project.pages[0];
+for(let i=0;i<10;i++) {
+ undone=undoBackground(undone);
+ assert.equal(colorSourceForPage(undone),'aligned-color',`cleanup undo ${i+1} preserves color source`);
+}
+assert.equal(undone.cleanHistory.length,0);assert.equal(undone.backgroundImage,'scan-bw');
+assert.equal(colorSourceAfterUndo(page),null,'legacy scan undo derives the prior empty source from history');
+for(const mutate of [bad=>{bad.pages[0].colorSource=42},bad=>{bad.pages[0].cleanHistory[0].beforeColorSource=42}]) {
+ const bad=structuredClone(p);mutate(bad);assert.equal(deserializeProject(JSON.stringify(bad)).ok,false);
+}
+console.log('PASS: text geometry/inverse, persistent color assets, bounded cleanup undo, reference/scan undo, save/load and validation');

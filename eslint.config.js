@@ -13,6 +13,8 @@ export default tseslint.config(
     ignores: [
       "**/dist/**",
       "**/build/**",
+      "**/release/**",
+      "**/out/**",
       "**/node_modules/**",
       "**/.vite/**",
       "**/*.cjs",

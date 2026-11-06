@@ -2,7 +2,7 @@
 // @ts-nocheck
 /**
  * Electron 开发启动脚本：
- * 1. 用 esbuild 实时打包 src/main.ts -> dist/main.cjs
+ * 1. 用 esbuild 实时打包主进程与 preload -> dist/*.cjs
  * 2. 以 HW_DEV=1 启动 electron，连接 web 的 vite dev server
  *
  * 前提：apps/web 的 `npm run dev` 已经在运行（端口 5173）。
@@ -17,11 +17,12 @@ const root = resolve(__dirname, "..");
 
 async function main() {
   await build({
-    entryPoints: [resolve(root, "src/main.ts")],
+    entryPoints: [resolve(root, "src/main.ts"), resolve(root, "src/preload.ts")],
     bundle: true,
     platform: "node",
     format: "cjs",
-    outfile: resolve(root, "dist/main.cjs"),
+    outdir: resolve(root, "dist"),
+    outExtension: { ".js": ".cjs" },
     external: ["electron"],
     logLevel: "info",
   });

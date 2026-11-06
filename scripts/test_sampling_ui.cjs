@@ -2,7 +2,8 @@
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const fixture = execFileSync('services/api/.venv/bin/python', ['-c', 'import sys; sys.path.insert(0,"services/api/scripts"); from test_photo_detect import photo_fixture; photo_fixture().save(sys.stdout.buffer,format="PNG")']);
+const python = process.platform === 'win32' ? 'services/api/.venv/Scripts/python.exe' : 'services/api/.venv/bin/python';
+const fixture = execFileSync(python, ['-c', 'import sys; sys.path.insert(0,"services/api/scripts"); from test_photo_detect import photo_fixture; photo_fixture().save(sys.stdout.buffer,format="PNG")']);
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });

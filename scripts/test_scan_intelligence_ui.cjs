@@ -1,12 +1,13 @@
 const assert=require('node:assert/strict');
 const {execFileSync}=require('node:child_process');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const fixture=execFileSync('services/api/.venv/bin/python',['-c','import sys;sys.path.insert(0,"services/api/scripts");from test_deskew import page_fixture;page_fixture(5).save(sys.stdout.buffer,format="PNG")']);
-const ref=execFileSync('services/api/.venv/bin/python',['-c','import sys;sys.path.insert(0,"services/api/scripts");from test_reference_restore import reference_fixture;reference_fixture().save(sys.stdout.buffer,format="PNG")']);
-const annotated=execFileSync('services/api/.venv/bin/python',['-c','import sys;sys.path.insert(0,"services/api/scripts");from test_reference_restore import reference_fixture;from PIL import ImageDraw;im=reference_fixture();ImageDraw.Draw(im).rectangle((200,240,390,290),fill="black");im.save(sys.stdout.buffer,format="PNG")']);
-(async()=>{const browser=await chromium.launch({executablePath:'/usr/bin/chromium',headless:true,args:['--no-sandbox']});try{
+const python = process.platform === 'win32' ? 'services/api/.venv/Scripts/python.exe' : 'services/api/.venv/bin/python';
+const fixture=execFileSync(python,['-c','import sys;sys.path.insert(0,"services/api/scripts");from test_deskew import page_fixture;page_fixture(5).save(sys.stdout.buffer,format="PNG")']);
+const ref=execFileSync(python,['-c','import sys;sys.path.insert(0,"services/api/scripts");from test_reference_restore import reference_fixture;reference_fixture().save(sys.stdout.buffer,format="PNG")']);
+const annotated=execFileSync(python,['-c','import sys;sys.path.insert(0,"services/api/scripts");from test_reference_restore import reference_fixture;from PIL import ImageDraw;im=reference_fixture();ImageDraw.Draw(im).rectangle((200,240,390,290),fill="black");im.save(sys.stdout.buffer,format="PNG")']);
+(async()=>{const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});try{
  const page=await browser.newPage({viewport:{width:1500,height:1100}});const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());const button=name=>page.getByRole('button',{name,exact:true});
- async function save(){const p=page.waitForEvent('download');await button('保存').click();const stream=await(await p).createReadStream();const a=[];for await(const c of stream)a.push(c);return JSON.parse(Buffer.concat(a));}
+ async function save(){const p=page.waitForEvent('download');await button('保存').click();const stream=await(await p).createReadStream();const a=[];for await(const c of stream)a.push(c);const text=Buffer.concat(a).toString();const {deserializeProject}=await import('../packages/shared/dist/index.js');return deserializeProject(text).project;}
  async function load(project){const p=page.waitForEvent('filechooser');await page.getByTitle('加载项目 JSON').click();await(await p).setFiles({name:'geometry.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(project))});await button('加载').waitFor();}
  async function reference(buffer,name){const chooser=page.waitForEvent('filechooser');await button('原卷对照修复').click();await(await chooser).setFiles({name,mimeType:'image/png',buffer});}
  await page.goto('http://localhost:5173');await page.locator('.upload-area input').setInputFiles({name:'skew.png',mimeType:'image/png',buffer:fixture});await page.getByText('700×900 · 0 字',{exact:true}).waitFor();

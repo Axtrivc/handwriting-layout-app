@@ -34,21 +34,32 @@ declare global {
 
 const LS_KEY = "hw:apiBase";
 
-/** 读取当前 API base。 */
-export function getApiBase(): string {
-  if (typeof window !== "undefined" && window.__API_BASE__) {
-    return window.__API_BASE__;
+export function normalizeApiBase(url: string): string {
+  const normalized = url.trim().replace(/\/+$/, "");
+  const parsed = new URL(normalized);
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error("后端地址必须是有效的 HTTP(S) URL，且不能包含凭据、查询或片段");
   }
+  return normalized;
+}
+
+/** 读取当前 API base；用户明确保存的地址优先于桌面注入的默认值。 */
+export function getApiBase(): string {
   if (typeof localStorage !== "undefined") {
     const stored = localStorage.getItem(LS_KEY);
-    if (stored) return stored;
+    if (stored) {
+      try { return normalizeApiBase(stored); } catch { /* Ignore invalid legacy values. */ }
+    }
+  }
+  if (typeof window !== "undefined" && window.__API_BASE__) {
+    return normalizeApiBase(window.__API_BASE__);
   }
   return DEFAULT_API_BASE;
 }
 
 /** 设置并持久化 API base。 */
 export function setApiBase(url: string): void {
-  const normalized = url.trim().replace(/\/+$/, "");
+  const normalized = normalizeApiBase(url);
   if (typeof localStorage !== "undefined") {
     localStorage.setItem(LS_KEY, normalized);
   }
@@ -160,7 +171,7 @@ export async function segmentGlyph(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
-  });
+  }, 60000);
 }
 
 /** 调用 /detect-glyph-candidates 自动检测字形候选区域。 */
@@ -171,7 +182,7 @@ export async function detectGlyphCandidates(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
-  });
+  }, 60000);
 }
 
 /** 查询 OCR 可用性。 */
@@ -185,7 +196,7 @@ export async function ocrGlyph(req: OcrGlyphRequest): Promise<OcrResultResponse>
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
-  });
+  }, 60000);
 }
 
 /** 调用 /ocr-sample 识别整张样本图。 */
@@ -194,7 +205,7 @@ export async function ocrSample(req: OcrSampleRequest): Promise<OcrResultRespons
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
-  });
+  }, 60000);
 }
 
 /** 调用 /suggest-glyph-labels 对候选框逐个 OCR。 */
@@ -205,5 +216,5 @@ export async function suggestGlyphLabels(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
-  });
+  }, 60000);
 }
